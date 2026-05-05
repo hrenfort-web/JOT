@@ -9,10 +9,20 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "axios": "^1.16.0",
     "expo": "~54.0.33",
+    "expo-auth-session": "~7.0.11",
+    "expo-camera": "~17.0.10",
+    "expo-haptics": "~15.0.8",
+    "expo-image-picker": "~17.0.11",
+    "expo-network": "~8.0.8",
+    "expo-router": "~6.0.23",
+    "expo-secure-store": "~15.0.8",
+    "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-native": "0.81.5",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
