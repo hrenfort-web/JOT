@@ -1,16 +1,29 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors } from '../theme';
-import { formatHours, isSameDay, shortDayLabel, toIsoDay } from '../utils/dateHelpers';
+import { compareDay, formatHours, isSameDay, shortDayLabel, toIsoDay } from '../utils/dateHelpers';
 
 interface WeekBarProps {
   days: Date[];
   hoursByDay: Record<string, number>;
   selectedDate: string;
   today: Date;
+  targetHours: number;
   onSelectDay: (iso: string) => void;
 }
 
-export function WeekBar({ days, hoursByDay, selectedDate, today, onSelectDay }: WeekBarProps) {
+const GREEN_BG = '#D1FAE5';
+const GREEN_TEXT = '#065F46';
+const RED_BG = '#FEE2E2';
+const RED_TEXT = '#991B1B';
+
+export function WeekBar({
+  days,
+  hoursByDay,
+  selectedDate,
+  today,
+  targetHours,
+  onSelectDay,
+}: WeekBarProps) {
   return (
     <View style={styles.row}>
       {days.map((d) => {
@@ -18,25 +31,60 @@ export function WeekBar({ days, hoursByDay, selectedDate, today, onSelectDay }: 
         const hours = hoursByDay[iso] ?? 0;
         const isToday = isSameDay(d, today);
         const isSelected = iso === selectedDate;
+        const cmp = compareDay(d, today);
+        const isFuture = cmp > 0;
+        const metTarget = hours >= targetHours;
+
+        let bg: string = colors.background;
+        let textColor: string = colors.text;
+        let labelColor: string = colors.muted;
+        let hoursColor: string = colors.text;
+
+        if (!isFuture) {
+          if (metTarget) {
+            bg = GREEN_BG;
+            textColor = GREEN_TEXT;
+            labelColor = GREEN_TEXT;
+            hoursColor = GREEN_TEXT;
+          } else {
+            bg = RED_BG;
+            textColor = RED_TEXT;
+            labelColor = RED_TEXT;
+            hoursColor = RED_TEXT;
+          }
+        }
+
+        const borderColor = isToday
+          ? colors.accent
+          : isSelected
+            ? colors.text
+            : colors.border;
+        const borderWidth = isToday || isSelected ? 2 : 1;
+
         return (
           <Pressable
             key={iso}
             onPress={() => onSelectDay(iso)}
             style={({ pressed }) => [
               styles.pill,
-              isSelected && !isToday && styles.pillSelected,
-              isToday && styles.pillToday,
+              { backgroundColor: bg, borderColor, borderWidth },
               pressed && styles.pillPressed,
             ]}
           >
-            <Text style={[styles.dayLabel, isToday && styles.todayText]}>
+            <Text
+              style={[
+                styles.dayLabel,
+                { color: labelColor },
+                isToday && styles.dayLabelToday,
+              ]}
+            >
               {shortDayLabel(d)}
             </Text>
             <Text
               style={[
                 styles.hoursLabel,
-                hours === 0 && styles.zeroHours,
-                isToday && styles.todayText,
+                { color: hoursColor },
+                hours === 0 && isFuture && styles.zeroFuture,
               ]}
             >
               {hours === 0 ? '—' : formatHours(hours)}
@@ -60,18 +108,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 10,
     borderRadius: 14,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
     gap: 4,
-  },
-  pillSelected: {
-    backgroundColor: colors.subtle,
-    borderColor: colors.text,
-  },
-  pillToday: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
   },
   pillPressed: {
     opacity: 0.75,
@@ -79,18 +116,16 @@ const styles = StyleSheet.create({
   dayLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.muted,
+  },
+  dayLabelToday: {
+    fontWeight: '700',
   },
   hoursLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.text,
   },
-  zeroHours: {
+  zeroFuture: {
     color: colors.muted,
     fontWeight: '500',
-  },
-  todayText: {
-    color: '#FFFFFF',
   },
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Pressable,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -11,12 +12,16 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
+import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import {
+  addWeeks,
   formatHours,
   getMonday,
   getSunday,
   getWeekDays,
+  isSameDay,
+  startOfDay,
   toIsoDay,
 } from '../../utils/dateHelpers';
 import { WeekBar } from '../../components/WeekBar';
@@ -31,10 +36,12 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
 import { useToastStore } from '../../store/useToastStore';
+import { useReminderStore } from '../../store/useReminderStore';
 import { runInitialSync } from '../../services/sync/initialSync';
 import {
   getEntryLockReason,
   isEntryEditable,
+  loadProjectIdsInRange,
   lockReasonMessage,
 } from '../../services/bqe/timeentry';
 import { useOnline } from '../../services/sync/connectivity';
@@ -42,15 +49,25 @@ import type { LocalProject, LocalTimeEntry } from '../../db/schema';
 import type { ProjectNode } from '../../services/bqe/project';
 
 const WEEKDAYS = 5;
+const MAX_WEEK_OFFSET = 4;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const today = useMemo(() => new Date(), []);
-  const monday = useMemo(() => getMonday(today), [today]);
-  const sunday = useMemo(() => getSunday(today), [today]);
+  const today = useMemo(() => startOfDay(new Date()), []);
+
+  const [weekOffset, setWeekOffset] = useState(0);
+  const referenceDate = useMemo(() => addWeeks(today, weekOffset), [today, weekOffset]);
+  const monday = useMemo(() => getMonday(referenceDate), [referenceDate]);
+  const sunday = useMemo(() => getSunday(referenceDate), [referenceDate]);
   const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
+  const friday = useMemo(() => visibleDays[visibleDays.length - 1], [visibleDays]);
+  const isCurrentWeek = weekOffset === 0;
+  const isPastWeek = weekOffset < 0;
+  const isFutureWeek = weekOffset > 0;
 
   const user = useAuthStore((s) => s.user);
+  const reminderPrefs = useReminderStore((s) => s.prefs);
+  const targetPerDay = reminderPrefs.targetPerDay ?? 8;
 
   const tree = useProjectStore((s) => s.tree);
   const flatProjects = useProjectStore((s) => s.flatProjects);
@@ -72,6 +89,8 @@ export default function HomeScreen() {
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSyncingFresh, setIsSyncingFresh] = useState(false);
   const [isSubmittingWeek, setIsSubmittingWeek] = useState(false);
+  const [showAllProjects, setShowAllProjects] = useState(false);
+  const [priorWeekParentIds, setPriorWeekParentIds] = useState<Set<string>>(new Set());
 
   const standardHours = (user?.standardHoursPerWeek as number | undefined) ?? 40;
 
@@ -117,6 +136,48 @@ export default function HomeScreen() {
     }, [bootstrapped, refreshWeek]),
   );
 
+  useEffect(() => {
+    if (!bootstrapped) return;
+    refreshWeek();
+  }, [bootstrapped, weekOffset, refreshWeek]);
+
+  useEffect(() => {
+    setShowAllProjects(false);
+    if (isCurrentWeek) {
+      setSelectedDate(toIsoDay(today));
+    } else {
+      setSelectedDate(toIsoDay(monday));
+    }
+  }, [weekOffset, isCurrentWeek, monday, today, setSelectedDate]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const priorMonday = addWeeks(monday, -1);
+    const priorSunday = addWeeks(sunday, -1);
+    let cancelled = false;
+    loadProjectIdsInRange(user.id, priorMonday, priorSunday)
+      .then((phaseIds) => {
+        if (cancelled) return;
+        const parents = new Set<string>();
+        const lookup = useProjectStore.getState().flatProjects;
+        const phaseToParent = new Map<string, string>();
+        for (const p of lookup) {
+          if (p.isPhase && p.parentId) phaseToParent.set(p.id, p.parentId);
+        }
+        for (const phaseId of phaseIds) {
+          const parent = phaseToParent.get(phaseId);
+          if (parent) parents.add(parent);
+        }
+        setPriorWeekParentIds(parents);
+      })
+      .catch(() => {
+        if (!cancelled) setPriorWeekParentIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, monday, sunday, flatProjects.length]);
+
   const hoursByDay = useMemo(() => buildHoursByDay(weekEntries), [weekEntries]);
   const phaseToParent = useMemo(() => buildPhaseToParent(flatProjects), [flatProjects]);
   const hoursByParent = useMemo(
@@ -128,7 +189,20 @@ export default function HomeScreen() {
     [weekEntries, flatProjects, tree],
   );
 
-  const sortedProjects = useMemo(() => sortProjects(tree, hoursByParent), [tree, hoursByParent]);
+  const projectBuckets = useMemo(
+    () => bucketProjects(tree, hoursByParent, priorWeekParentIds),
+    [tree, hoursByParent, priorWeekParentIds],
+  );
+  const visibleProjects = useMemo(() => {
+    const { withCurrent, withPrior, others } = projectBuckets;
+    if (showAllProjects) return [...withCurrent, ...withPrior, ...others];
+    if (withCurrent.length === 0 && withPrior.length === 0) return others;
+    return [...withCurrent, ...withPrior];
+  }, [projectBuckets, showAllProjects]);
+  const moreProjectsCount = projectBuckets.others.length;
+  const showMoreToggle =
+    moreProjectsCount > 0 &&
+    (projectBuckets.withCurrent.length > 0 || projectBuckets.withPrior.length > 0);
 
   const totalHours = useMemo(
     () => weekEntries.reduce((sum, e) => sum + e.hours, 0),
@@ -171,7 +245,7 @@ export default function HomeScreen() {
 
   const handleSubmitWeek = () => {
     if (!user?.id || draftEntries.length === 0) return;
-    const weekLabel = formatWeekRange(monday, sunday);
+    const weekLabel = weekRangeLabel(monday, friday, false, false);
     Alert.alert(
       `Submit ${draftEntries.length} ${draftEntries.length === 1 ? 'entry' : 'entries'} (${formatHours(draftHours)}h)?`,
       `For the week of ${weekLabel}. You won't be able to edit them after.`,
@@ -267,8 +341,44 @@ export default function HomeScreen() {
         }
       >
         <View style={styles.header}>
-          <Text style={styles.greeting}>This week</Text>
-          <Text style={styles.subGreeting}>{formatWeekRange(monday, sunday)}</Text>
+          <Text style={styles.greeting}>{greetingFor(user)}</Text>
+          <View style={styles.weekNavRow}>
+            <Pressable
+              accessibilityLabel="Previous week"
+              onPress={() => setWeekOffset((o) => Math.max(-MAX_WEEK_OFFSET, o - 1))}
+              disabled={weekOffset <= -MAX_WEEK_OFFSET}
+              style={({ pressed }) => [
+                styles.chev,
+                pressed && styles.chevPressed,
+                weekOffset <= -MAX_WEEK_OFFSET && styles.chevDisabled,
+              ]}
+            >
+              <Ionicons name="chevron-back" size={18} color={colors.text} />
+            </Pressable>
+            <Text style={styles.subGreeting}>
+              {weekRangeLabel(monday, friday, isPastWeek, isFutureWeek)}
+            </Text>
+            <Pressable
+              accessibilityLabel="Next week"
+              onPress={() => setWeekOffset((o) => Math.min(MAX_WEEK_OFFSET, o + 1))}
+              disabled={weekOffset >= MAX_WEEK_OFFSET}
+              style={({ pressed }) => [
+                styles.chev,
+                pressed && styles.chevPressed,
+                weekOffset >= MAX_WEEK_OFFSET && styles.chevDisabled,
+              ]}
+            >
+              <Ionicons name="chevron-forward" size={18} color={colors.text} />
+            </Pressable>
+            {!isCurrentWeek ? (
+              <Pressable
+                onPress={() => setWeekOffset(0)}
+                style={({ pressed }) => [styles.todayPill, pressed && styles.todayPillPressed]}
+              >
+                <Text style={styles.todayPillText}>Today</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
 
         <WeekBar
@@ -276,6 +386,7 @@ export default function HomeScreen() {
           hoursByDay={hoursByDay}
           selectedDate={selectedDate}
           today={today}
+          targetHours={targetPerDay}
           onSelectDay={setSelectedDate}
         />
 
@@ -285,14 +396,14 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.projects}>
-          <Text style={styles.sectionHeader}>Your projects</Text>
+          <Text style={styles.sectionHeader}>Recent projects</Text>
 
           {isBootstrapping ? (
             <View style={styles.spinner}>
               <ActivityIndicator color={colors.accent} />
               {isSyncingFresh ? <Text style={styles.spinnerNote}>Syncing with BQE Core…</Text> : null}
             </View>
-          ) : sortedProjects.length === 0 ? (
+          ) : visibleProjects.length === 0 ? (
             <EmptyState
               icon="briefcase-outline"
               title="No active projects found"
@@ -300,7 +411,7 @@ export default function HomeScreen() {
             />
           ) : (
             <View style={styles.projectList}>
-              {sortedProjects.map((node) => (
+              {visibleProjects.map((node) => (
                 <ProjectCard
                   key={node.project.id}
                   name={node.project.name}
@@ -310,6 +421,23 @@ export default function HomeScreen() {
                   onPress={() => router.push(`/entry/${node.project.id}`)}
                 />
               ))}
+              {showMoreToggle ? (
+                <Pressable
+                  onPress={() => setShowAllProjects((v) => !v)}
+                  style={({ pressed }) => [styles.moreBtn, pressed && styles.moreBtnPressed]}
+                >
+                  <Ionicons
+                    name={showAllProjects ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={colors.muted}
+                  />
+                  <Text style={styles.moreBtnText}>
+                    {showAllProjects
+                      ? 'Hide other projects'
+                      : `More projects (${moreProjectsCount})`}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           )}
 
@@ -435,28 +563,58 @@ function buildPhaseLabelByParent(
   return labels;
 }
 
-function sortProjects(
-  tree: ProjectNode[],
-  hoursByParent: Map<string, number>,
-): ProjectNode[] {
-  const withHours: ProjectNode[] = [];
-  const without: ProjectNode[] = [];
-  for (const node of tree) {
-    if ((hoursByParent.get(node.project.id) ?? 0) > 0) {
-      withHours.push(node);
-    } else {
-      without.push(node);
-    }
-  }
-  withHours.sort((a, b) => a.project.name.localeCompare(b.project.name));
-  without.sort((a, b) => a.project.name.localeCompare(b.project.name));
-  return [...withHours, ...without];
+interface ProjectBuckets {
+  withCurrent: ProjectNode[];
+  withPrior: ProjectNode[];
+  others: ProjectNode[];
 }
 
-function formatWeekRange(start: Date, end: Date): string {
+function bucketProjects(
+  tree: ProjectNode[],
+  hoursByParent: Map<string, number>,
+  priorWeekParentIds: Set<string>,
+): ProjectBuckets {
+  const withCurrent: ProjectNode[] = [];
+  const withPrior: ProjectNode[] = [];
+  const others: ProjectNode[] = [];
+  for (const node of tree) {
+    if ((hoursByParent.get(node.project.id) ?? 0) > 0) {
+      withCurrent.push(node);
+    } else if (priorWeekParentIds.has(node.project.id)) {
+      withPrior.push(node);
+    } else {
+      others.push(node);
+    }
+  }
+  const byName = (a: ProjectNode, b: ProjectNode) =>
+    a.project.name.localeCompare(b.project.name);
+  withCurrent.sort(byName);
+  withPrior.sort(byName);
+  others.sort(byName);
+  return { withCurrent, withPrior, others };
+}
+
+function weekRangeLabel(
+  monday: Date,
+  friday: Date,
+  isPast: boolean,
+  isFuture: boolean,
+): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${fmt(start)} – ${fmt(end)}`;
+  const range = `${fmt(monday)} — ${fmt(friday)}`;
+  if (isPast) return `Past week of ${range}`;
+  if (isFuture) return `Future week of ${range}`;
+  return `Week of ${range}`;
+}
+
+function greetingFor(user: { firstName?: string; displayName?: string } | null): string {
+  if (!user) return 'Hi there';
+  const first =
+    user.firstName?.trim() ||
+    user.displayName?.split(' ')[0]?.trim() ||
+    null;
+  return first ? `Hi, ${first}` : 'Hi there';
 }
 
 function entriesHeading(selectedDate: string, today: Date): string {
@@ -488,7 +646,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 16,
-    gap: 2,
+    gap: 8,
   },
   greeting: {
     fontSize: 28,
@@ -496,9 +654,43 @@ const styles = StyleSheet.create({
     color: colors.text,
     letterSpacing: -0.5,
   },
+  weekNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   subGreeting: {
+    flex: 1,
     fontSize: 14,
     color: colors.muted,
+  },
+  chev: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.subtle,
+  },
+  chevPressed: {
+    opacity: 0.6,
+  },
+  chevDisabled: {
+    opacity: 0.35,
+  },
+  todayPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: colors.accent,
+  },
+  todayPillPressed: {
+    opacity: 0.85,
+  },
+  todayPillText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   summary: {
     flexDirection: 'row',
@@ -521,6 +713,25 @@ const styles = StyleSheet.create({
   },
   projectList: {
     gap: 10,
+  },
+  moreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+  },
+  moreBtnPressed: {
+    opacity: 0.7,
+  },
+  moreBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
   },
   entries: {
     marginTop: 28,

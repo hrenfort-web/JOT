@@ -250,6 +250,21 @@ export async function markEntriesSubmissionStatus(
   );
 }
 
+export async function loadProjectIdsInRange(
+  resourceId: string,
+  start: Date | string,
+  end: Date | string,
+): Promise<string[]> {
+  const startIso = toIsoDay(start);
+  const endIso = toIsoDay(end);
+  const rows = await getAll<{ projectId: string }>(
+    `SELECT DISTINCT projectId FROM LocalTimeEntry
+     WHERE resourceId = ? AND date >= ? AND date <= ?`,
+    [resourceId, startIso, endIso],
+  );
+  return rows.map((r) => r.projectId);
+}
+
 export async function loadDraftSyncedEntries(
   resourceId: string,
   weekStart: Date | string,

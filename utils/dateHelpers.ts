@@ -12,6 +12,18 @@ export function getMonday(date: Date = new Date()): Date {
   return d;
 }
 
+export function addWeeks(date: Date, weeks: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + weeks * 7);
+  return d;
+}
+
+export function compareDay(a: Date, b: Date): number {
+  const aKey = startOfDay(a).getTime();
+  const bKey = startOfDay(b).getTime();
+  return aKey - bKey;
+}
+
 export function getSunday(date: Date = new Date()): Date {
   const monday = getMonday(date);
   const sunday = new Date(monday);

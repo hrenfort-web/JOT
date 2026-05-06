@@ -5,6 +5,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { colors } from '../theme';
 import { formatHours } from '../utils/dateHelpers';
 import { SubmissionBadge } from './SubmissionBadge';
+import { PhasePill } from './PhasePill';
 
 interface EntryRowProps {
   projectName: string;
@@ -99,11 +100,7 @@ export function EntryRow({
             <Text style={styles.name} numberOfLines={1}>
               {projectName}
             </Text>
-            {phaseLabel ? (
-              <Text style={styles.phase} numberOfLines={1}>
-                {phaseLabel}
-              </Text>
-            ) : null}
+            {phaseLabel ? <PhasePill code={phaseLabel} tintColor={color} size="sm" /> : null}
             <SubmissionBadge status={submissionStatus ?? null} />
           </View>
           {memoPreview ? (

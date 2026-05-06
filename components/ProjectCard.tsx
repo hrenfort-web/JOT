@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme';
 import { formatHours } from '../utils/dateHelpers';
+import { PhasePill } from './PhasePill';
 
 interface ProjectCardProps {
   name: string;
@@ -22,15 +23,11 @@ export function ProjectCard({ name, phaseLabel, hours, color, onPress }: Project
         <Text style={styles.name} numberOfLines={1}>
           {name}
         </Text>
-        {phaseLabel ? (
-          <Text style={styles.phase} numberOfLines={1}>
-            {phaseLabel}
-          </Text>
-        ) : (
-          <Text style={[styles.phase, styles.phaseEmpty]}>Tap to log time</Text>
-        )}
       </View>
       <View style={styles.right}>
+        {phaseLabel ? (
+          <PhasePill code={phaseLabel} tintColor={color} />
+        ) : null}
         <Text style={[styles.hours, hours === 0 && styles.hoursZero]}>
           {hours === 0 ? '—' : `${formatHours(hours)}h`}
         </Text>
@@ -62,29 +59,23 @@ const styles = StyleSheet.create({
   },
   body: {
     flex: 1,
-    gap: 2,
   },
   name: {
     fontSize: 16,
     fontWeight: '600',
     color: colors.text,
   },
-  phase: {
-    fontSize: 13,
-    color: colors.muted,
-  },
-  phaseEmpty: {
-    fontStyle: 'italic',
-  },
   right: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   hours: {
     fontSize: 15,
     fontWeight: '600',
     color: colors.text,
+    minWidth: 36,
+    textAlign: 'right',
   },
   hoursZero: {
     color: colors.muted,
