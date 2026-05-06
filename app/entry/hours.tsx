@@ -31,7 +31,12 @@ import {
   MemoSuggestions,
   getMemoSuggestions,
 } from '../../services/memos/suggestions';
-import { isEntryLocked, loadEntryById } from '../../services/bqe/timeentry';
+import {
+  getEntryLockReason,
+  isEntryEditable,
+  loadEntryById,
+  lockReasonMessage,
+} from '../../services/bqe/timeentry';
 import {
   MEMO_MAX,
   MEMO_MIN,
@@ -143,7 +148,8 @@ export default function HoursEntryScreen() {
     };
   }, [targetProject, phaseCode]);
 
-  const editingLocked = loadedEntry ? isEntryLocked(loadedEntry) : false;
+  const editingLockReason = loadedEntry ? getEntryLockReason(loadedEntry) : null;
+  const editingLocked = loadedEntry ? !isEntryEditable(loadedEntry) : false;
 
   const hoursScale = useRef(new Animated.Value(1)).current;
   const isFirstHourRender = useRef(true);
@@ -324,10 +330,10 @@ export default function HoursEntryScreen() {
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
-        {editingLocked ? (
+        {editingLocked && editingLockReason ? (
           <View style={styles.lockedBanner}>
             <Text style={styles.lockedBannerText}>
-              This entry is locked because it has been billed.
+              {lockReasonMessage(editingLockReason)}
             </Text>
           </View>
         ) : null}

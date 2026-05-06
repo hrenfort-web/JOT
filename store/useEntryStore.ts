@@ -7,15 +7,18 @@ import {
   deleteLocalEntry,
   fetchWeekEntries,
   insertLocalEntry,
+  loadDraftSyncedEntries,
   loadEntryById,
   loadLocalWeekEntries,
   loadPendingEntries,
   markEntriesFailed,
+  markEntriesSubmissionStatus,
   markEntriesSynced,
   markEntrySyncedWithBqeId,
   markEntryVersion,
   patchLocalEntry,
   resetEntryToPending,
+  submitEntriesToWorkflow,
   updateEntry as bqeUpdateEntry,
 } from '../services/bqe/timeentry';
 import { toIsoDay } from '../services/bqe/utils';
@@ -90,6 +93,11 @@ interface EntryState {
     id: number,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   syncPendingEntries: () => Promise<void>;
+  submitWeek: (
+    resourceId: string,
+    weekStart: string,
+    weekEnd: string,
+  ) => Promise<{ ok: true; count: number } | { ok: false; count: number; error: string }>;
 }
 
 export const useEntryStore = create<EntryState>((set, get) => ({
@@ -360,5 +368,30 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       set({ isSyncing: false });
       await get().refreshLocal();
     }
+  },
+
+  submitWeek: async (resourceId, weekStart, weekEnd) => {
+    const drafts = await loadDraftSyncedEntries(resourceId, weekStart, weekEnd);
+    if (drafts.length === 0) {
+      return { ok: true as const, count: 0 };
+    }
+    const localIds = drafts.map((e) => e.id);
+    const bqeIds = drafts.map((e) => e.bqeId).filter((v): v is string => !!v);
+
+    if (!inDemoMode()) {
+      try {
+        await submitEntriesToWorkflow(bqeIds);
+      } catch (e) {
+        return {
+          ok: false as const,
+          count: 0,
+          error: e instanceof Error ? e.message : 'Failed to submit week',
+        };
+      }
+    }
+
+    await markEntriesSubmissionStatus(localIds, 'submitted');
+    await get().refreshLocal();
+    return { ok: true as const, count: localIds.length };
   },
 }));

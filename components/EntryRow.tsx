@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Swipeable } from 'react-native-gesture-handler';
 import { colors } from '../theme';
 import { formatHours } from '../utils/dateHelpers';
+import { SubmissionBadge } from './SubmissionBadge';
 
 interface EntryRowProps {
   projectName: string;
@@ -14,6 +15,7 @@ interface EntryRowProps {
   locked?: boolean;
   pending?: boolean;
   failed?: boolean;
+  submissionStatus?: string | null;
   onPress?: () => void;
   onDelete?: () => void;
 }
@@ -29,6 +31,7 @@ export function EntryRow({
   locked,
   pending,
   failed,
+  submissionStatus,
   onPress,
   onDelete,
 }: EntryRowProps) {
@@ -101,6 +104,7 @@ export function EntryRow({
                 {phaseLabel}
               </Text>
             ) : null}
+            <SubmissionBadge status={submissionStatus ?? null} />
           </View>
           {memoPreview ? (
             <Text style={styles.memo} numberOfLines={1}>

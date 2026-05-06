@@ -95,8 +95,8 @@ async function seedSampleEntries(): Promise<void> {
     const iso = toIsoDay(date);
     await run(
       `INSERT INTO LocalTimeEntry
-       (bqeId, projectId, activityId, resourceId, date, hours, memo, isBillable, syncStatus, source, createdAt, version, billStatus)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'synced', 'manual', ?, '1', 'Open')`,
+       (bqeId, projectId, activityId, resourceId, date, hours, memo, isBillable, syncStatus, source, createdAt, version, billStatus, submissionStatus)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'synced', 'manual', ?, '1', 'Open', 'draft')`,
       [
         `demo-entry-${i + 1}`,
         entry.phaseId,

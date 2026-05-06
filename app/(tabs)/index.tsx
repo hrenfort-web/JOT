@@ -26,12 +26,17 @@ import { EntryRow } from '../../components/EntryRow';
 import { FloatingActionButton } from '../../components/FloatingActionButton';
 import { EmptyState } from '../../components/EmptyState';
 import { OfflineBanner } from '../../components/OfflineBanner';
+import { SubmitWeekCard } from '../../components/SubmitWeekCard';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
 import { useToastStore } from '../../store/useToastStore';
 import { runInitialSync } from '../../services/sync/initialSync';
-import { isEntryLocked } from '../../services/bqe/timeentry';
+import {
+  getEntryLockReason,
+  isEntryEditable,
+  lockReasonMessage,
+} from '../../services/bqe/timeentry';
 import { useOnline } from '../../services/sync/connectivity';
 import type { LocalProject, LocalTimeEntry } from '../../db/schema';
 import type { ProjectNode } from '../../services/bqe/project';
@@ -59,12 +64,14 @@ export default function HomeScreen() {
   const lastError = useEntryStore((s) => s.lastError);
   const deleteEntry = useEntryStore((s) => s.deleteEntry);
   const retryEntry = useEntryStore((s) => s.retryEntry);
+  const submitWeek = useEntryStore((s) => s.submitWeek);
   const showToast = useToastStore((s) => s.show);
   const online = useOnline();
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSyncingFresh, setIsSyncingFresh] = useState(false);
+  const [isSubmittingWeek, setIsSubmittingWeek] = useState(false);
 
   const standardHours = (user?.standardHoursPerWeek as number | undefined) ?? 40;
 
@@ -142,9 +149,55 @@ export default function HomeScreen() {
     [weekEntries, selectedDate],
   );
 
+  const draftEntries = useMemo(
+    () =>
+      weekEntries.filter(
+        (e) =>
+          e.syncStatus === 'synced' &&
+          (e.submissionStatus === 'draft' ||
+            e.submissionStatus === 'rejected' ||
+            e.submissionStatus === null),
+      ),
+    [weekEntries],
+  );
+  const draftHours = useMemo(
+    () => draftEntries.reduce((s, e) => s + e.hours, 0),
+    [draftEntries],
+  );
+  const pendingWeekCount = useMemo(
+    () => weekEntries.filter((e) => e.syncStatus !== 'synced').length,
+    [weekEntries],
+  );
+
+  const handleSubmitWeek = () => {
+    if (!user?.id || draftEntries.length === 0) return;
+    const weekLabel = formatWeekRange(monday, sunday);
+    Alert.alert(
+      `Submit ${draftEntries.length} ${draftEntries.length === 1 ? 'entry' : 'entries'} (${formatHours(draftHours)}h)?`,
+      `For the week of ${weekLabel}. You won't be able to edit them after.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Submit',
+          onPress: async () => {
+            setIsSubmittingWeek(true);
+            const result = await submitWeek(user.id, toIsoDay(monday), toIsoDay(sunday));
+            setIsSubmittingWeek(false);
+            if (result.ok) {
+              showToast('Week submitted!', 'success');
+            } else {
+              showToast(`Couldn't submit: ${result.error}`, 'error');
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleEntryPress = (entry: LocalTimeEntry) => {
-    if (isEntryLocked(entry)) {
-      showToast('This entry is locked because it has been billed', 'info');
+    const lockReason = getEntryLockReason(entry);
+    if (lockReason) {
+      showToast(lockReasonMessage(lockReason), 'info');
       return;
     }
     if (entry.syncStatus === 'failed') {
@@ -177,7 +230,7 @@ export default function HomeScreen() {
   };
 
   const handleEntryDelete = (entry: LocalTimeEntry) => {
-    if (isEntryLocked(entry)) return;
+    if (!isEntryEditable(entry)) return;
     const projectName = displayNameForEntry(entry, projectsById);
     Alert.alert(
       `Delete ${formatHours(entry.hours)}h on ${projectName}?`,
@@ -295,9 +348,10 @@ export default function HomeScreen() {
                       hours={entry.hours}
                       memo={entry.memo}
                       color={parent?.color ?? colors.accent}
-                      locked={isEntryLocked(entry)}
+                      locked={!isEntryEditable(entry)}
                       pending={entry.syncStatus === 'pending'}
                       failed={entry.syncStatus === 'failed'}
+                      submissionStatus={entry.submissionStatus}
                       onPress={() => handleEntryPress(entry)}
                       onDelete={() => handleEntryDelete(entry)}
                     />
@@ -305,6 +359,18 @@ export default function HomeScreen() {
                 })}
               </View>
             )}
+          </View>
+        ) : null}
+
+        {!isBootstrapping && weekEntries.length > 0 ? (
+          <View style={styles.submitWrap}>
+            <SubmitWeekCard
+              draftHours={draftHours}
+              draftCount={draftEntries.length}
+              pendingCount={pendingWeekCount}
+              submitting={isSubmittingWeek}
+              onSubmit={handleSubmitWeek}
+            />
           </View>
         ) : null}
       </ScrollView>
@@ -474,6 +540,10 @@ const styles = StyleSheet.create({
   },
   entryList: {
     gap: 10,
+  },
+  submitWrap: {
+    marginTop: 24,
+    paddingHorizontal: 16,
   },
   spinner: {
     paddingVertical: 32,

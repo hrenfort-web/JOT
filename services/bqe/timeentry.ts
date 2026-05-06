@@ -112,6 +112,36 @@ export function isEntryLocked(entry: { billStatus: string | null }): boolean {
   return LOCKED_BILL_STATUSES.has(entry.billStatus.toLowerCase());
 }
 
+export type LockReason = 'billed' | 'submitted' | 'approved';
+
+export function getEntryLockReason(entry: {
+  billStatus: string | null;
+  submissionStatus: string | null;
+}): LockReason | null {
+  if (isEntryLocked(entry)) return 'billed';
+  if (entry.submissionStatus === 'approved') return 'approved';
+  if (entry.submissionStatus === 'submitted') return 'submitted';
+  return null;
+}
+
+export function lockReasonMessage(reason: LockReason): string {
+  switch (reason) {
+    case 'billed':
+      return 'This entry is locked because it has been billed';
+    case 'submitted':
+      return "This entry was submitted — it's locked while your PM reviews it";
+    case 'approved':
+      return 'This entry has been approved and can no longer be edited';
+  }
+}
+
+export function isEntryEditable(entry: {
+  billStatus: string | null;
+  submissionStatus: string | null;
+}): boolean {
+  return getEntryLockReason(entry) === null;
+}
+
 export async function createEntry(payload: CreateTimeEntryPayload): Promise<BqeTimeEntry> {
   const response = await bqeClient.post('/timeentry', toApiPayload(payload));
   return response.data as BqeTimeEntry;
@@ -189,8 +219,8 @@ export async function insertLocalEntry(input: {
 }): Promise<number> {
   const result = await run(
     `INSERT INTO LocalTimeEntry
-     (bqeId, projectId, activityId, resourceId, date, hours, memo, isBillable, syncStatus, source, createdAt)
-     VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+     (bqeId, projectId, activityId, resourceId, date, hours, memo, isBillable, syncStatus, source, createdAt, submissionStatus)
+     VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 'draft')`,
     [
       input.projectId,
       input.activityId,
@@ -204,6 +234,52 @@ export async function insertLocalEntry(input: {
     ],
   );
   return result.lastInsertRowId as number;
+}
+
+export type SubmissionStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
+
+export async function markEntriesSubmissionStatus(
+  ids: number[],
+  status: SubmissionStatus,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(',');
+  await run(
+    `UPDATE LocalTimeEntry SET submissionStatus = ? WHERE id IN (${placeholders})`,
+    [status, ...ids],
+  );
+}
+
+export async function loadDraftSyncedEntries(
+  resourceId: string,
+  weekStart: Date | string,
+  weekEnd: Date | string,
+): Promise<LocalTimeEntry[]> {
+  const start = toIsoDay(weekStart);
+  const end = toIsoDay(weekEnd);
+  const rows = await getAll<LocalTimeEntryRow>(
+    `SELECT * FROM LocalTimeEntry
+     WHERE resourceId = ? AND date >= ? AND date <= ?
+       AND syncStatus = 'synced'
+       AND (submissionStatus = 'draft' OR submissionStatus = 'rejected' OR submissionStatus IS NULL)
+     ORDER BY id ASC`,
+    [resourceId, start, end],
+  );
+  return rows.map(entryFromRow);
+}
+
+// TODO: Verify the actual BQE Core workflow-submit endpoint when we have credentials.
+// The product spec only documents that /timeentry has a `workflow` array on the response.
+// The submit endpoint is most likely something like POST /timeentry/submit with an array
+// of entry IDs in the body (or a per-entry POST /timeentry/{id}/submit). Until we have
+// real credentials to test against, this placeholder no-ops on success — the local rows
+// still flip to submissionStatus='submitted' so the UI flow is exercised end-to-end.
+export async function submitEntriesToWorkflow(bqeIds: string[]): Promise<void> {
+  if (bqeIds.length === 0) return;
+  // Placeholder: replace with real BQE workflow submit call once endpoint is verified.
+  // Example shape (unverified):
+  // await bqeClient.post('/timeentry/submit', { entryIds: bqeIds });
+  return;
 }
 
 export async function patchLocalEntry(
