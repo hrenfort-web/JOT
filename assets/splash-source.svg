@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1242 2688" width="1242" height="2688">
+  <rect width="1242" height="2688" fill="#1D9E75"/>
+  <text
+    x="621"
+    y="1380"
+    text-anchor="middle"
+    fill="#FFFFFF"
+    font-family="-apple-system, system-ui, sans-serif"
+    font-size="280"
+    font-weight="700"
+    letter-spacing="-8"
+  >Jot</text>
+  <text
+    x="621"
+    y="1480"
+    text-anchor="middle"
+    fill="#FFFFFF"
+    font-family="-apple-system, system-ui, sans-serif"
+    font-size="48"
+    font-weight="500"
+    opacity="0.85"
+  >Jot it. Done.</text>
+</svg>

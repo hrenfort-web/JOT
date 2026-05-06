@@ -1,24 +1,37 @@
 {
   "expo": {
-    "name": "jot",
+    "name": "Jot",
     "slug": "jot",
+    "scheme": "jot",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1D9E75",
+      "dark": {
+        "image": "./assets/splash-icon.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#0F2A20"
+      }
     },
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.getjot.app",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.getjot.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1D9E75"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -29,7 +42,31 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-sqlite"
-    ]
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Jot uses the camera to scan handwritten timecards. Photos stay on your device until you submit."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Jot reads photos from your library so you can send a saved timesheet to the scanner."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1D9E75"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
   }
 }
