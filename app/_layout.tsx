@@ -138,6 +138,7 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="entry/picker" options={{ title: 'Pick a project' }} />
           <Stack.Screen name="entry/[projectId]" options={{ title: 'Select phase' }} />
           <Stack.Screen name="entry/hours" options={{ title: 'Log hours' }} />
           <Stack.Screen

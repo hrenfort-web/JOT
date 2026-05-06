@@ -58,6 +58,7 @@ interface EntryState {
   pendingEntries: LocalTimeEntry[];
   selectedDate: string;
   weekRange: { start: string; end: string } | null;
+  currentResourceId: string | null;
   isLoading: boolean;
   isSyncing: boolean;
   lastError: string | null;
@@ -105,6 +106,7 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   pendingEntries: [],
   selectedDate: toIsoDay(new Date()),
   weekRange: null,
+  currentResourceId: null,
   isLoading: false,
   isSyncing: false,
   lastError: null,
@@ -112,7 +114,12 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   setSelectedDate: (date) => set({ selectedDate: date }),
 
   loadWeek: async (resourceId, weekStart, weekEnd) => {
-    set({ isLoading: true, lastError: null, weekRange: { start: weekStart, end: weekEnd } });
+    set({
+      isLoading: true,
+      lastError: null,
+      weekRange: { start: weekStart, end: weekEnd },
+      currentResourceId: resourceId,
+    });
     try {
       if (!inDemoMode()) {
         try {
@@ -135,18 +142,15 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   },
 
   refreshLocal: async () => {
-    const { weekRange } = get();
-    if (!weekRange) {
+    const { weekRange, currentResourceId } = get();
+    if (!weekRange || !currentResourceId) {
       const pending = await loadPendingEntries();
       set({ pendingEntries: pending });
       rescheduleAllReminders().catch(() => undefined);
       return;
     }
-    const resourceId = get().weekEntries[0]?.resourceId;
     const [weekEntries, pending] = await Promise.all([
-      resourceId
-        ? loadLocalWeekEntries(resourceId, weekRange.start, weekRange.end)
-        : Promise.resolve(get().weekEntries),
+      loadLocalWeekEntries(currentResourceId, weekRange.start, weekRange.end),
       loadPendingEntries(),
     ]);
     set({ weekEntries, pendingEntries: pending });

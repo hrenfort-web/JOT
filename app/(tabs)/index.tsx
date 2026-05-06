@@ -504,9 +504,9 @@ export default function HomeScreen() {
       </ScrollView>
 
       <FloatingActionButton
-        icon="camera-outline"
-        accessibilityLabel="Scan timesheet"
-        onPress={() => router.push('/scan')}
+        icon="add"
+        accessibilityLabel="Log time on a new project"
+        onPress={() => router.push('/entry/picker')}
       />
     </SafeAreaView>
   );
