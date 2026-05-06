@@ -22,9 +22,11 @@ import { Ionicons } from '@expo/vector-icons';
 export default function LoginScreen() {
   const router = useRouter();
   const login = useAuthStore((s) => s.login);
+  const loginAsDemo = useAuthStore((s) => s.loginAsDemo);
   const sessionExpired = useAuthStore((s) => s.sessionExpired);
   const clearSessionExpired = useAuthStore((s) => s.clearSessionExpired);
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
@@ -73,7 +75,22 @@ export default function LoginScreen() {
     }
   };
 
+  const onPressDemo = async () => {
+    setError(null);
+    clearSessionExpired();
+    setDemoLoading(true);
+    try {
+      await loginAsDemo();
+      router.replace('/');
+    } catch (e) {
+      logError('login.demo', e);
+      setError("Couldn't load the demo data.");
+      setDemoLoading(false);
+    }
+  };
+
   const disabled = loading || !request;
+  const demoDisabled = demoLoading || loading;
 
   return (
     <View style={styles.container}>
@@ -108,6 +125,24 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Connect to BQE Core</Text>
           )}
         </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          onPress={onPressDemo}
+          disabled={demoDisabled}
+          style={({ pressed }) => [
+            styles.demoButton,
+            demoDisabled && styles.buttonDisabled,
+            pressed && !demoDisabled && styles.buttonPressed,
+          ]}
+        >
+          {demoLoading ? (
+            <ActivityIndicator color={colors.accent} />
+          ) : (
+            <Text style={styles.demoButtonText}>Explore Demo</Text>
+          )}
+        </Pressable>
+        <Text style={styles.demoHint}>Try the app with sample data</Text>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
@@ -159,6 +194,27 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  demoButton: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  demoButtonText: {
+    color: colors.accent,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  demoHint: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: -8,
   },
   error: {
     color: '#B91C1C',

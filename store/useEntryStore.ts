@@ -22,7 +22,22 @@ import { toIsoDay } from '../services/bqe/utils';
 import { isOnline } from '../services/sync/connectivity';
 import { processQueue } from '../services/sync/queue';
 import { rescheduleAllReminders } from '../services/notifications/reminders';
+import { useAuthStore } from './useAuthStore';
+import { run } from '../db/database';
 import type { EntrySource, LocalTimeEntry } from '../db/schema';
+
+function inDemoMode(): boolean {
+  return useAuthStore.getState().demoMode;
+}
+
+async function markDemoSynced(localId: number): Promise<string> {
+  const bqeId = `demo-entry-${localId}-${Date.now()}`;
+  await run(
+    `UPDATE LocalTimeEntry SET syncStatus = 'synced', bqeId = ?, version = '1', billStatus = 'Open' WHERE id = ?`,
+    [bqeId, localId],
+  );
+  return bqeId;
+}
 
 interface NewEntryInput {
   projectId: string;
@@ -91,10 +106,12 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   loadWeek: async (resourceId, weekStart, weekEnd) => {
     set({ isLoading: true, lastError: null, weekRange: { start: weekStart, end: weekEnd } });
     try {
-      try {
-        await fetchWeekEntries(resourceId, weekStart, weekEnd);
-      } catch (e) {
-        set({ lastError: e instanceof Error ? e.message : 'Failed to fetch entries' });
+      if (!inDemoMode()) {
+        try {
+          await fetchWeekEntries(resourceId, weekStart, weekEnd);
+        } catch (e) {
+          set({ lastError: e instanceof Error ? e.message : 'Failed to fetch entries' });
+        }
       }
       const [weekEntries, pending] = await Promise.all([
         loadLocalWeekEntries(resourceId, weekStart, weekEnd),
@@ -155,6 +172,12 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       source: input.source ?? 'manual',
     });
 
+    if (inDemoMode()) {
+      const bqeId = await markDemoSynced(localId);
+      await get().refreshLocal();
+      return { ok: true as const, queued: false as const, localId, bqeId };
+    }
+
     if (!isOnline()) {
       await get().refreshLocal();
       return { ok: true as const, queued: true as const, localId };
@@ -206,6 +229,12 @@ export const useEntryStore = create<EntryState>((set, get) => ({
         source: input.source ?? 'scanned',
       });
       localIds.push(id);
+    }
+
+    if (inDemoMode()) {
+      for (const id of localIds) await markDemoSynced(id);
+      await get().refreshLocal();
+      return { ok: true as const, queued: false as const, count: localIds.length };
     }
 
     if (!isOnline()) {
@@ -260,6 +289,11 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       return { ok: false as const, error: 'Entry not found' };
     }
     await patchLocalEntry(id, patch);
+    if (inDemoMode()) {
+      await markDemoSynced(id);
+      await get().refreshLocal();
+      return { ok: true as const };
+    }
     if (!existing.bqeId) {
       await get().refreshLocal();
       return { ok: true as const };
@@ -298,7 +332,7 @@ export const useEntryStore = create<EntryState>((set, get) => ({
 
   deleteEntry: async (id) => {
     const existing = get().weekEntries.find((e) => e.id === id) ?? (await loadEntryById(id));
-    if (existing?.bqeId) {
+    if (existing?.bqeId && !inDemoMode()) {
       try {
         await bqeDeleteEntry(existing.bqeId);
       } catch (e) {

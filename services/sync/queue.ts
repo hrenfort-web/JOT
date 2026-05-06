@@ -8,6 +8,7 @@ import {
   markEntrySyncedWithBqeId,
 } from '../bqe/timeentry';
 import { isOnline } from './connectivity';
+import { useAuthStore } from '../../store/useAuthStore';
 
 const MAX_RETRIES = 3;
 const PAUSE_FALLBACK_SECONDS = 30;
@@ -49,6 +50,9 @@ export function pausedUntilMs(): number {
 }
 
 export async function processQueue(): Promise<QueueResult> {
+  if (useAuthStore.getState().demoMode) {
+    return { attempted: 0, submitted: 0, failed: 0, paused: false };
+  }
   if (processing || !isOnline() || isQueuePaused()) {
     return { attempted: 0, submitted: 0, failed: 0, paused: isQueuePaused() };
   }

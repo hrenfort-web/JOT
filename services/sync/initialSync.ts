@@ -2,6 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import { fetchAndSaveProjects } from '../bqe/project';
 import { fetchAndSaveActivities } from '../bqe/activity';
 import { fetchAndSaveEmployees } from '../bqe/employee';
+import { useAuthStore } from '../../store/useAuthStore';
 
 const LAST_SYNC_KEY = 'jot_last_sync';
 
@@ -25,6 +26,10 @@ const STEPS: SyncStep[] = [
 ];
 
 export async function runInitialSync(onProgress?: ProgressCallback): Promise<void> {
+  if (useAuthStore.getState().demoMode) {
+    await setLastSyncTime(new Date());
+    return;
+  }
   const total = STEPS.length;
   let completed = 0;
 

@@ -8,6 +8,13 @@ import {
   storeTokens,
 } from '../services/bqe/auth';
 import type { BqeEmployee } from '../services/bqe/employee';
+import {
+  DEMO_ACCESS_TOKEN,
+  DEMO_EMPLOYEE,
+  DEMO_ENDPOINT,
+  clearDemoData,
+  seedDemoData,
+} from '../services/demo/seedData';
 
 export type LogoutReason = 'manual' | 'session_expired';
 
@@ -15,11 +22,13 @@ interface AuthState {
   isReady: boolean;
   isAuthenticated: boolean;
   sessionExpired: boolean;
+  demoMode: boolean;
   user: BqeEmployee | null;
   tokens: StoredTokens | null;
   baseUrl: string | null;
 
   login: (tokens: StoredTokens, user: BqeEmployee) => Promise<void>;
+  loginAsDemo: () => Promise<void>;
   logout: (reason?: LogoutReason) => Promise<void>;
   refreshTokens: () => Promise<void>;
   loadStoredTokens: () => Promise<void>;
@@ -30,6 +39,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isReady: false,
   isAuthenticated: false,
   sessionExpired: false,
+  demoMode: false,
   user: null,
   tokens: null,
   baseUrl: null,
@@ -42,17 +52,42 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       user,
       isAuthenticated: true,
       sessionExpired: false,
+      demoMode: false,
+    });
+  },
+
+  loginAsDemo: async () => {
+    await seedDemoData();
+    const tokens: StoredTokens = {
+      accessToken: DEMO_ACCESS_TOKEN,
+      tokenType: 'Bearer',
+      expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000,
+      endpoint: DEMO_ENDPOINT,
+    };
+    set({
+      tokens,
+      baseUrl: tokens.endpoint,
+      user: DEMO_EMPLOYEE,
+      isAuthenticated: true,
+      sessionExpired: false,
+      demoMode: true,
     });
   },
 
   logout: async (reason = 'manual') => {
-    await clearTokens();
+    const wasDemo = get().demoMode;
+    if (wasDemo) {
+      await clearDemoData();
+    } else {
+      await clearTokens();
+    }
     set({
       tokens: null,
       baseUrl: null,
       user: null,
       isAuthenticated: false,
       sessionExpired: reason === 'session_expired',
+      demoMode: false,
     });
   },
 
