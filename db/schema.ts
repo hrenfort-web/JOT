@@ -4,6 +4,12 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE LocalTimeEntry ADD COLUMN submissionStatus TEXT`,
   `ALTER TABLE LocalTimeEntry ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE LocalTimeEntry ADD COLUMN lastError TEXT`,
+  // Studio G filters phases by BQE contract-type enum (see project.ts).
+  // Existing installs need this column added before saveProjects can write it.
+  // SQLite type affinity is loose, so even if an early build added this as
+  // TEXT, the read-side coercion in projectFromRow normalises everything to
+  // a number.
+  `ALTER TABLE LocalProject ADD COLUMN contractType INTEGER`,
 ];
 
 export const SCHEMA = `
@@ -21,7 +27,11 @@ CREATE TABLE IF NOT EXISTS LocalProject (
   isActive INTEGER NOT NULL DEFAULT 1,
   color TEXT,
   sortOrder INTEGER NOT NULL DEFAULT 0,
-  lastSynced TEXT NOT NULL
+  lastSynced TEXT NOT NULL,
+  -- BQE returns the contract-type enum as an integer (sometimes as a numeric
+  -- string; we coerce on read in projectFromRow). See ALLOWED_CONTRACT_TYPES
+  -- in services/bqe/project.ts for the enum values.
+  contractType INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_project_parent ON LocalProject(parentId);
 CREATE INDEX IF NOT EXISTS idx_project_active ON LocalProject(isActive);
@@ -78,6 +88,10 @@ export interface LocalProjectRow {
   color: string | null;
   sortOrder: number;
   lastSynced: string;
+  // SQLite affinity may return this as either a number or numeric string
+  // depending on which migration produced the column. Always normalised to
+  // `number | null` by `projectFromRow` before downstream code sees it.
+  contractType: number | string | null;
 }
 
 export interface LocalProject {
@@ -92,6 +106,7 @@ export interface LocalProject {
   color: string | null;
   sortOrder: number;
   lastSynced: string;
+  contractType: number | null;
 }
 
 export interface LocalActivityRow {
@@ -165,10 +180,19 @@ export interface LocalTimeEntry {
 }
 
 export function projectFromRow(row: LocalProjectRow): LocalProject {
+  // Coerce contractType once at the read boundary so every consumer can rely
+  // on `number | null`. Handles BQE returning a numeric string (e.g. "4"),
+  // SQLite TEXT-affinity columns from older migrations, and genuine numbers.
+  let contractType: number | null = null;
+  if (row.contractType != null) {
+    const n = Number(row.contractType);
+    contractType = Number.isFinite(n) ? n : null;
+  }
   return {
     ...row,
     isPhase: !!row.isPhase,
     isActive: !!row.isActive,
+    contractType,
   };
 }
 

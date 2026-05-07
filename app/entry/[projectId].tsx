@@ -1,16 +1,68 @@
-import { useEffect, useMemo } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../theme';
 import { DaySelector } from '../../components/DaySelector';
 import { PhaseButton } from '../../components/PhaseButton';
+import { PhaseList, type PhaseGroup } from '../../components/PhaseList';
 import { EmptyState } from '../../components/EmptyState';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
+import { useAuthStore } from '../../store/useAuthStore';
 import { phaseMeta } from '../../utils/phaseMeta';
 import { getMonday, getWeekDays } from '../../utils/dateHelpers';
+import { loadLastUsedDateByPhase } from '../../services/bqe/timeentry';
+import type { LocalProject } from '../../db/schema';
 
 const WEEKDAYS = 5;
+
+// View-mode thresholds. Tweak both numbers together: GRID_MAX is inclusive
+// (≤ 6 phases stays in the grid), LIST_SEARCH_MIN is the inclusive lower
+// bound for showing the search bar.
+const GRID_MAX = 6;
+const LIST_SEARCH_MIN = 12;
+const RECENCY_WINDOW_DAYS = 90;
+
+interface SortedPhases {
+  recent: LocalProject[];
+  other: LocalProject[];
+}
+
+function sortPhases(
+  phases: LocalProject[],
+  lastUsed: Map<string, string>,
+): SortedPhases {
+  const recent: LocalProject[] = [];
+  const other: LocalProject[] = [];
+  for (const phase of phases) {
+    if (lastUsed.has(phase.id)) {
+      recent.push(phase);
+    } else {
+      other.push(phase);
+    }
+  }
+  // Most recently used first.
+  recent.sort((a, b) => {
+    const da = lastUsed.get(a.id) ?? '';
+    const db = lastUsed.get(b.id) ?? '';
+    return db.localeCompare(da);
+  });
+  // Alphabetical by phase code, then name, for the unused tail.
+  other.sort((a, b) => {
+    const ca = a.phaseCode ?? '';
+    const cb = b.phaseCode ?? '';
+    if (ca !== cb) return ca.localeCompare(cb);
+    return a.name.localeCompare(b.name);
+  });
+  return { recent, other };
+}
+
+function matchesSearch(phase: LocalProject, query: string): boolean {
+  if (!query) return true;
+  const meta = phaseMeta(phase.phaseCode, phase.name);
+  const haystack = `${meta.code} ${meta.name} ${phase.name}`.toLowerCase();
+  return haystack.includes(query.toLowerCase());
+}
 
 export default function PhaseSelectionScreen() {
   const router = useRouter();
@@ -21,20 +73,53 @@ export default function PhaseSelectionScreen() {
   const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
 
   const flatProjects = useProjectStore((s) => s.flatProjects);
+  const getProjectPhases = useProjectStore((s) => s.getProjectPhases);
   const isLoadingProjects = useProjectStore((s) => s.isLoading);
   const selectedDate = useEntryStore((s) => s.selectedDate);
   const setSelectedDate = useEntryStore((s) => s.setSelectedDate);
+  const resourceId = useAuthStore((s) => s.user?.id ?? null);
 
   const project = useMemo(
     () => flatProjects.find((p) => p.id === projectId && !p.isPhase) ?? null,
     [flatProjects, projectId],
   );
+  // Filtered to allowed contract types (Studio G excludes Reimbursable +
+  // Cost+Percentage). Disallowed phases never appear in the picker.
   const phases = useMemo(
-    () => flatProjects.filter((p) => p.isPhase && p.parentId === projectId),
-    [flatProjects, projectId],
+    () => (projectId ? getProjectPhases(projectId) : []),
+    [getProjectPhases, flatProjects, projectId],
   );
 
   const projectsLoaded = flatProjects.length > 0;
+
+  const [lastUsed, setLastUsed] = useState<Map<string, string>>(new Map());
+  const [search, setSearch] = useState('');
+
+  // Pull recency once per project visit. We don't subscribe to entry-store
+  // changes here — the picker is short-lived and re-mounts on each navigation.
+  useEffect(() => {
+    let cancelled = false;
+    if (!resourceId || phases.length < 2) {
+      setLastUsed(new Map());
+      return;
+    }
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - RECENCY_WINDOW_DAYS);
+    loadLastUsedDateByPhase(
+      resourceId,
+      phases.map((p) => p.id),
+      cutoff,
+    )
+      .then((map) => {
+        if (!cancelled) setLastUsed(map);
+      })
+      .catch(() => {
+        if (!cancelled) setLastUsed(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resourceId, phases]);
 
   useEffect(() => {
     if (!projectsLoaded || !projectId) return;
@@ -44,6 +129,36 @@ export default function PhaseSelectionScreen() {
       router.replace({ pathname: '/entry/hours', params: { projectId: project.id } });
     }
   }, [projectsLoaded, projectId, phases, project, router]);
+
+  const sorted = useMemo(() => sortPhases(phases, lastUsed), [phases, lastUsed]);
+  const orderedPhases = useMemo(
+    () => [...sorted.recent, ...sorted.other],
+    [sorted],
+  );
+
+  // Decide rendering mode by phase count.
+  const phaseCount = phases.length;
+  const useGrid = phaseCount <= GRID_MAX;
+  const useSearch = phaseCount >= LIST_SEARCH_MIN;
+
+  // Build groups for the list view. Skip dual headers when one bucket is
+  // empty (e.g. brand-new project with no entries yet, or every phase used
+  // recently) — a single ungrouped section reads cleaner than a lone header.
+  // Computed unconditionally to keep hook order stable across early returns.
+  const groups: PhaseGroup[] = useMemo(() => {
+    if (useGrid) return [];
+    const filterFn = (p: LocalProject) => matchesSearch(p, search);
+    const recent = sorted.recent.filter(filterFn);
+    const other = sorted.other.filter(filterFn);
+    const bothPopulated = recent.length > 0 && other.length > 0;
+    if (!bothPopulated) {
+      return [{ title: null, phases: [...recent, ...other] }];
+    }
+    return [
+      { title: 'Recently used', phases: recent },
+      { title: 'Other phases', phases: other },
+    ];
+  }, [useGrid, sorted, search]);
 
   const onPickPhase = (phaseId: string) => {
     router.push({ pathname: '/entry/hours', params: { projectId: phaseId } });
@@ -117,22 +232,35 @@ export default function PhaseSelectionScreen() {
         onSelectDay={setSelectedDate}
       />
 
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.grid}>
-          {phases.map((phase) => {
-            const meta = phaseMeta(phase.phaseCode, phase.name);
-            return (
-              <View key={phase.id} style={styles.cell}>
-                <PhaseButton
-                  code={meta.code}
-                  name={meta.name}
-                  icon={meta.icon}
-                  onPress={() => onPickPhase(phase.id)}
-                />
-              </View>
-            );
-          })}
-        </View>
+      <ScrollView
+        contentContainerStyle={useGrid ? styles.scroll : styles.scrollList}
+        keyboardShouldPersistTaps="handled"
+      >
+        {useGrid ? (
+          <View style={styles.grid}>
+            {orderedPhases.map((phase) => {
+              const meta = phaseMeta(phase.phaseCode, phase.name);
+              return (
+                <View key={phase.id} style={styles.cell}>
+                  <PhaseButton
+                    code={meta.code}
+                    name={meta.name}
+                    icon={meta.icon}
+                    onPress={() => onPickPhase(phase.id)}
+                  />
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <PhaseList
+            groups={groups}
+            onPickPhase={onPickPhase}
+            searchEnabled={useSearch}
+            searchValue={search}
+            onChangeSearch={setSearch}
+          />
+        )}
       </ScrollView>
     </View>
   );
@@ -152,6 +280,9 @@ const styles = StyleSheet.create({
   scroll: {
     paddingHorizontal: 16,
     paddingBottom: 32,
+  },
+  scrollList: {
+    paddingTop: 8,
   },
   grid: {
     flexDirection: 'row',

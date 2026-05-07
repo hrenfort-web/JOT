@@ -1,4 +1,5 @@
 import type { LocalProject } from '../../db/schema';
+import { isAllowedContractType } from '../bqe/project';
 
 export interface PhaseLookup {
   code: string | null;
@@ -14,10 +15,14 @@ export interface ProjectLookupEntry {
 }
 
 export function buildProjectLookup(projects: LocalProject[]): ProjectLookupEntry[] {
+  // Match the tree-builder rules: surface only phases the user is allowed to
+  // log against, and skip parents that have no allowed phases AND aren't
+  // themselves allowed (e.g. Reimbursable rollups). This keeps Claude's scan
+  // matcher from suggesting projects the submission API would reject.
   const tops = projects.filter((p) => !p.isPhase && p.isActive);
   const phasesByParent = new Map<string, LocalProject[]>();
   for (const p of projects) {
-    if (p.isPhase && p.isActive && p.parentId) {
+    if (p.isPhase && p.isActive && p.parentId && isAllowedContractType(p)) {
       const list = phasesByParent.get(p.parentId) ?? [];
       list.push(p);
       phasesByParent.set(p.parentId, list);
@@ -25,6 +30,11 @@ export function buildProjectLookup(projects: LocalProject[]): ProjectLookupEntry
   }
 
   return tops
+    .filter((top) => {
+      const children = phasesByParent.get(top.id);
+      if (children && children.length > 0) return true;
+      return isAllowedContractType(top);
+    })
     .map<ProjectLookupEntry>((top) => {
       const children = phasesByParent.get(top.id) ?? [];
       const phases: PhaseLookup[] = children.map((ph) => ({

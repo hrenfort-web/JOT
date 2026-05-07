@@ -14,6 +14,12 @@ export interface ColorPalette {
   accent: string;
   accentTint: string;
 
+  // Brand-only secondary (terracotta). Used for the wordmark tagline and
+  // occasional warm accents — NEVER for buttons, toggles, or other
+  // interactive states. Primary green is the single action color.
+  secondary: string;
+  secondaryTint: string;
+
   danger: string;
   dangerTint: string;
   warning: string;
@@ -31,10 +37,14 @@ export const lightColors: ColorPalette = {
   border: '#E5E7EB',
   subtle: '#F9FAFB',
 
-  primary: '#1D9E75',
-  primaryTint: '#E6F5EE',
-  accent: '#1D9E75',
-  accentTint: '#E6F5EE',
+  primary: '#2E8B6A',
+  primaryTint: '#E5F2EC',
+  accent: '#2E8B6A',
+  accentTint: '#E5F2EC',
+
+  // Terracotta — darker variant for readable text on light backgrounds.
+  secondary: '#B06840',
+  secondaryTint: '#F8E9E0',
 
   danger: '#E24B4A',
   dangerTint: '#FCE7E7',
@@ -53,10 +63,15 @@ export const darkColors: ColorPalette = {
   border: '#2A2A2C',
   subtle: '#1A1A1C',
 
-  primary: '#2EB489',
+  // Brand green stays consistent in dark mode.
+  primary: '#2E8B6A',
   primaryTint: '#1A3329',
-  accent: '#2EB489',
+  accent: '#2E8B6A',
   accentTint: '#1A3329',
+
+  // Terracotta — lighter variant for legibility on dark backgrounds.
+  secondary: '#C47856',
+  secondaryTint: '#3A2418',
 
   danger: '#F26361',
   dangerTint: '#3A1B1B',

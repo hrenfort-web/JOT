@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   ProjectNode,
   buildProjectHierarchy,
+  isAllowedContractType,
   loadProjects,
 } from '../services/bqe/project';
 import { loadActivities } from '../services/bqe/activity';
@@ -47,7 +48,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   getProjectPhases: (parentId) =>
-    get().flatProjects.filter((p) => p.isPhase && p.parentId === parentId),
+    get().flatProjects.filter(
+      (p) => p.isPhase && p.parentId === parentId && isAllowedContractType(p),
+    ),
 
   getActiveProjects: () => get().tree.filter((n) => n.project.isActive),
 

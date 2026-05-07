@@ -124,8 +124,11 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.brand}>
-        <Text style={styles.title}>Jot</Text>
-        <Text style={styles.tagline}>Jot it. Done.</Text>
+        <Text style={styles.title}>jot</Text>
+        <Text style={styles.tagline}>
+          <Text style={styles.taglineSecondary}>jot it.</Text>
+          <Text style={styles.taglinePrimary}> Done.</Text>
+        </Text>
       </View>
 
       {sessionExpired ? (
@@ -154,6 +157,8 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Connect to BQE Core</Text>
           )}
         </Pressable>
+
+        <Text style={styles.subtitle}>Timecards for architects. Finally.</Text>
 
         {demoEnabled ? (
           <>
@@ -196,15 +201,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    fontSize: 48,
+    fontSize: 56,
     fontWeight: '700',
     color: colors.text,
-    letterSpacing: -1,
+    letterSpacing: -2,
   },
   tagline: {
     marginTop: 8,
     fontSize: 16,
+    fontWeight: '600',
+  },
+  taglineSecondary: {
+    color: colors.secondary,
+    fontWeight: '600',
+  },
+  taglinePrimary: {
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  subtitle: {
+    fontSize: 13,
     color: colors.muted,
+    textAlign: 'center',
+    marginTop: -4,
   },
   actions: {
     gap: 16,

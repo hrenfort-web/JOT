@@ -313,6 +313,36 @@ export async function loadProjectIdsInRange(
   return rows.map((r) => r.projectId);
 }
 
+/**
+ * For each requested project/phase id, return the most recent entry date
+ * (ISO day) recorded by `resourceId` since `sinceDate`. Phases with no entries
+ * in the window are simply absent from the returned map. Used by the phase
+ * picker to bubble recently-used phases to the top.
+ */
+export async function loadLastUsedDateByPhase(
+  resourceId: string,
+  phaseIds: string[],
+  sinceDate: Date | string,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (phaseIds.length === 0) return map;
+  const since = toIsoDay(sinceDate);
+  const placeholders = phaseIds.map(() => '?').join(',');
+  const rows = await getAll<{ projectId: string; lastUsed: string }>(
+    `SELECT projectId, MAX(date) AS lastUsed
+     FROM LocalTimeEntry
+     WHERE resourceId = ?
+       AND date >= ?
+       AND projectId IN (${placeholders})
+     GROUP BY projectId`,
+    [resourceId, since, ...phaseIds],
+  );
+  for (const r of rows) {
+    if (r.lastUsed) map.set(r.projectId, r.lastUsed);
+  }
+  return map;
+}
+
 export async function loadDraftSyncedEntries(
   resourceId: string,
   weekStart: Date | string,

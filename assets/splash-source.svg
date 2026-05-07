@@ -1,23 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1242 2688" width="1242" height="2688">
-  <rect width="1242" height="2688" fill="#1D9E75"/>
+  <!-- Background: near-black -->
+  <rect width="1242" height="2688" fill="#111111"/>
+
+  <!-- "jot" wordmark in white, lowercase, vertically centered.
+       Canvas height 2688 → center 1344. With font-size 280 and an alphabetic
+       baseline, y ≈ 1440 places the visual midline of the text at the
+       canvas center. Tagline lives on the login screen, not the splash. -->
   <text
     x="621"
-    y="1380"
+    y="1440"
     text-anchor="middle"
     fill="#FFFFFF"
     font-family="-apple-system, system-ui, sans-serif"
     font-size="280"
     font-weight="700"
     letter-spacing="-8"
-  >Jot</text>
-  <text
-    x="621"
-    y="1480"
-    text-anchor="middle"
-    fill="#FFFFFF"
-    font-family="-apple-system, system-ui, sans-serif"
-    font-size="48"
-    font-weight="500"
-    opacity="0.85"
-  >Jot it. Done.</text>
+  >jot</text>
 </svg>

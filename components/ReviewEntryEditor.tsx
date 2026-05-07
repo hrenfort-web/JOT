@@ -50,6 +50,7 @@ export function ReviewEntryEditor({
   showRemove,
 }: ReviewEntryEditorProps) {
   const flatProjects = useProjectStore((s) => s.flatProjects);
+  const getProjectPhases = useProjectStore((s) => s.getProjectPhases);
 
   const [projectId, setProjectId] = useState<string | null>(initial.projectId);
   const [phaseProjectId, setPhaseProjectId] = useState<string | null>(initial.phaseProjectId);
@@ -67,12 +68,11 @@ export function ReviewEntryEditor({
     () => (projectId ? flatProjects.find((p) => p.id === projectId) ?? null : null),
     [projectId, flatProjects],
   );
+  // Filtered to allowed BQE contract types so reviewers can't reroute a
+  // scanned entry onto a phase the submission API would reject.
   const phases = useMemo(
-    () =>
-      projectId
-        ? flatProjects.filter((p) => p.isPhase && p.parentId === projectId)
-        : [],
-    [projectId, flatProjects],
+    () => (projectId ? getProjectPhases(projectId) : []),
+    [projectId, getProjectPhases, flatProjects],
   );
   const selectedPhase = useMemo(
     () => (phaseProjectId ? flatProjects.find((p) => p.id === phaseProjectId) ?? null : null),
@@ -118,7 +118,7 @@ export function ReviewEntryEditor({
 
   const onPickProject = (newProjectId: string) => {
     setProjectId(newProjectId);
-    const newPhases = flatProjects.filter((p) => p.isPhase && p.parentId === newProjectId);
+    const newPhases = getProjectPhases(newProjectId);
     setPhaseProjectId(newPhases[0]?.id ?? newProjectId);
   };
 
