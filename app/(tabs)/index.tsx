@@ -204,26 +204,25 @@ export default function HomeScreen() {
 
   // Cap renders so a firm with thousands of active projects doesn't try to
   // mount 3,000+ Pressables at once (Studio G's BQE returns 3,226 projects).
-  // Past ~500 we hide the "More projects" expander entirely and cap any
-  // fallback list to a manageable preview — the FAB → picker route lets the
-  // user search the full set when needed.
+  // Past ~500 we hide the "More projects" expander entirely — the FAB →
+  // picker route lets the user search the full set when needed.
   const HEAVY_LIST_THRESHOLD = 500;
-  const FALLBACK_PREVIEW_CAP = 50;
   const isHeavyList = flatProjects.length > HEAVY_LIST_THRESHOLD;
 
   const projectBuckets = useMemo(
     () => bucketProjects(tree, hoursByParent, priorWeekParentIds),
     [tree, hoursByParent, priorWeekParentIds],
   );
+  // The "Recent projects" list shows only projects the user has actually
+  // worked on this viewed week or the prior one. When both buckets are
+  // empty we render the dedicated "No recent activity" empty state instead
+  // of falling back to an alphabetical project directory — the directory was
+  // misleading (users assumed those were "their" projects), and the + FAB
+  // already gives access to the full picker.
   const visibleProjects = useMemo(() => {
     const { withCurrent, withPrior, others } = projectBuckets;
     if (showAllProjects && !isHeavyList) {
       return [...withCurrent, ...withPrior, ...others];
-    }
-    if (withCurrent.length === 0 && withPrior.length === 0) {
-      // Fallback: no entries this week or last week. Show alphabetical preview
-      // (capped) so the list doesn't try to render the full directory.
-      return isHeavyList ? others.slice(0, FALLBACK_PREVIEW_CAP) : others;
     }
     return [...withCurrent, ...withPrior];
   }, [projectBuckets, showAllProjects, isHeavyList]);
@@ -232,6 +231,10 @@ export default function HomeScreen() {
     !isHeavyList &&
     moreProjectsCount > 0 &&
     (projectBuckets.withCurrent.length > 0 || projectBuckets.withPrior.length > 0);
+  const noRecentActivity =
+    tree.length > 0 &&
+    projectBuckets.withCurrent.length === 0 &&
+    projectBuckets.withPrior.length === 0;
 
   if (__DEV__) {
     console.log(
@@ -379,6 +382,7 @@ export default function HomeScreen() {
           <Text style={styles.greeting}>{greetingFor(user)}</Text>
           <View style={styles.weekNavRow}>
             <Pressable
+              accessibilityRole="button"
               accessibilityLabel="Previous week"
               onPress={() => setWeekOffset((o) => Math.max(-MAX_WEEK_OFFSET, o - 1))}
               disabled={weekOffset <= -MAX_WEEK_OFFSET}
@@ -394,6 +398,7 @@ export default function HomeScreen() {
               {weekRangeLabel(monday, friday, isPastWeek, isFutureWeek)}
             </Text>
             <Pressable
+              accessibilityRole="button"
               accessibilityLabel="Next week"
               onPress={() => setWeekOffset((o) => Math.min(MAX_WEEK_OFFSET, o + 1))}
               disabled={weekOffset >= MAX_WEEK_OFFSET}
@@ -407,6 +412,8 @@ export default function HomeScreen() {
             </Pressable>
             {!isCurrentWeek ? (
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Jump to current week"
                 onPress={() => setWeekOffset(0)}
                 style={({ pressed }) => [styles.todayPill, pressed && styles.todayPillPressed]}
               >
@@ -438,12 +445,38 @@ export default function HomeScreen() {
               <ActivityIndicator color={colors.accent} />
               {isSyncingFresh ? <Text style={styles.spinnerNote}>Syncing with BQE Core…</Text> : null}
             </View>
-          ) : visibleProjects.length === 0 ? (
+          ) : tree.length === 0 ? (
             <EmptyState
               icon="briefcase-outline"
               title="No active projects found"
               subtitle="Make sure you're assigned to projects in BQE Core."
             />
+          ) : noRecentActivity ? (
+            // Honest empty state: don't fake a list out of the alphabetical
+            // first N projects. The + FAB is the route to the full picker.
+            // The "More projects" expander is intentionally suppressed here
+            // for the same reason — pretending the user has a relevant list
+            // when they haven't logged anything is misleading. The primary
+            // CTA below the subtitle gives a more discoverable second route
+            // to the picker, alongside the FAB.
+            <View>
+              <EmptyState
+                icon="calendar-outline"
+                title="No recent activity"
+                subtitle="Tap + below to log your first entry. Projects you charge to will appear here."
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Log your first entry"
+                onPress={() => router.push('/entry/picker')}
+                style={({ pressed }) => [
+                  styles.firstEntryBtn,
+                  pressed && styles.firstEntryBtnPressed,
+                ]}
+              >
+                <Text style={styles.firstEntryBtnText}>Log your first entry</Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.projectList}>
               {visibleProjects.map((node) => (
@@ -540,6 +573,7 @@ export default function HomeScreen() {
 
       <FloatingActionButton
         icon="add"
+        label="Log time"
         accessibilityLabel="Log time on a new project"
         onPress={() => router.push('/entry/picker')}
       />
@@ -759,6 +793,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: colors.border,
+  },
+  firstEntryBtn: {
+    // Lifts the CTA out of the muted EmptyState column with the brand
+    // green from theme.ts. Width is intentionally constrained so it reads
+    // as a focused primary action rather than a full-bleed banner.
+    alignSelf: 'center',
+    marginTop: 4,
+    marginHorizontal: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 12,
+    backgroundColor: colors.accent,
+    minWidth: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  firstEntryBtnPressed: {
+    opacity: 0.85,
+  },
+  firstEntryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
   moreBtnPressed: {
     opacity: 0.7,

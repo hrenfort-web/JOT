@@ -24,7 +24,7 @@ export function SummaryPill({ label, hours, variant = 'default' }: SummaryPillPr
 const styles = StyleSheet.create({
   pill: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,

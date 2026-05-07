@@ -23,6 +23,32 @@ interface EntryRowProps {
 
 const MEMO_PREVIEW_MAX = 48;
 
+interface EntryA11yInput {
+  projectName: string;
+  phaseLabel: string | null;
+  hours: number;
+  memo: string | null;
+  locked?: boolean;
+  failed?: boolean;
+  pending?: boolean;
+}
+
+// Compose a single screen-reader sentence summarising an entry. Mirrors the
+// visible chrome (project, phase, hours, memo) plus any sync state, so VO
+// users hear the same information sighted users see at a glance.
+function buildEntryA11yLabel(e: EntryA11yInput): string {
+  const phaseChunk = e.phaseLabel ? `, ${e.phaseLabel}` : '';
+  const memoChunk = e.memo && e.memo.trim().length > 0 ? `, ${e.memo}` : '';
+  const stateChunk = e.locked
+    ? ', locked'
+    : e.failed
+      ? ', failed to sync'
+      : e.pending
+        ? ', waiting to sync'
+        : '';
+  return `${e.projectName}${phaseChunk}, ${formatHours(e.hours)} hours${memoChunk}${stateChunk}`;
+}
+
 export function EntryRow({
   projectName,
   phaseLabel,
@@ -87,6 +113,23 @@ export function EntryRow({
       <Pressable
         onPress={handlePress}
         disabled={locked}
+        accessibilityRole="button"
+        accessibilityLabel={buildEntryA11yLabel({
+          projectName,
+          phaseLabel,
+          hours,
+          memo,
+          locked,
+          failed,
+          pending,
+        })}
+        accessibilityHint={
+          locked
+            ? 'Locked — cannot be edited'
+            : failed
+              ? 'Tap to retry sync'
+              : 'Tap to edit, swipe left to delete'
+        }
         style={({ pressed }) => [
           styles.row,
           pressed && !locked && styles.rowPressed,
@@ -137,7 +180,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,

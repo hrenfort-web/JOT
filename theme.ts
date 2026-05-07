@@ -29,13 +29,21 @@ export interface ColorPalette {
 }
 
 export const lightColors: ColorPalette = {
-  background: '#FFFFFF',
-  surface: '#F9FAFB',
+  // iOS-style softened light palette. `background` is the screen tone; cards
+  // and grouped sections use `surface` (pure white) so they visibly lift off
+  // the screen — the same pattern as the iOS Settings app.
+  // - `background` reads as a calm off-white at arm's length, removing the
+  //   harsh pure-white glare of the previous palette.
+  // - `subtle` sits just below `background` for press states on cards.
+  // - `border` was nudged from #E5E7EB to #E5E5EA so hairlines stay visible
+  //   against the softer screen tone.
+  background: '#F5F5F7',
+  surface: '#FFFFFF',
   text: '#111111',
   textSecondary: '#6B7280',
   muted: '#6B7280',
-  border: '#E5E7EB',
-  subtle: '#F9FAFB',
+  border: '#E5E5EA',
+  subtle: '#EBEBF0',
 
   primary: '#2E8B6A',
   primaryTint: '#E5F2EC',

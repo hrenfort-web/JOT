@@ -241,19 +241,39 @@ export default function SettingsScreen() {
         </Section>
 
         <Section title="Reminders">
-          <Row>
-            <View style={styles.rowBody}>
-              <Text style={styles.rowLabel}>Daily reminders</Text>
-              <Text style={styles.rowSubtle}>
-                Mon–Fri nudge plus Thu/Fri weekly check-ins
-              </Text>
-            </View>
-            <Switch
-              value={prefs.enabled && permissionGranted}
-              onValueChange={handleEnableToggle}
-              trackColor={{ true: colors.accent, false: colors.border }}
-            />
-          </Row>
+          {/* The toggle is the primary control of this section, so it gets
+              extra padding, a larger label, and a tinted background when
+              ON so the user can tell at a glance whether reminders are
+              actually firing. The Switch's ios_backgroundColor is set to
+              a darker grey than the section border so the off state has
+              real contrast — the default RN ios_backgroundColor blends
+              into the surrounding surface. */}
+          {(() => {
+            const remindersOn = prefs.enabled && permissionGranted;
+            return (
+              <View
+                style={[
+                  styles.toggleRow,
+                  remindersOn && styles.toggleRowOn,
+                ]}
+              >
+                <View style={styles.rowBody}>
+                  <Text style={styles.toggleLabel}>Daily reminders</Text>
+                  <Text style={styles.toggleSubtle}>
+                    Mon–Fri nudge plus Thu/Fri weekly check-ins
+                  </Text>
+                </View>
+                <Switch
+                  value={remindersOn}
+                  onValueChange={handleEnableToggle}
+                  trackColor={{ true: colors.accent, false: '#D1D5DB' }}
+                  thumbColor="#FFFFFF"
+                  ios_backgroundColor="#D1D5DB"
+                  style={styles.toggleSwitch}
+                />
+              </View>
+            );
+          })()}
 
           {prefs.enabled && !permissionGranted ? (
             <Pressable
@@ -402,6 +422,12 @@ function Row({ children, onPress, disabled }: RowProps) {
     <Pressable
       onPress={onPress}
       disabled={disabled}
+      // a11y: every interactive Row gets button semantics. The visible Text
+      // children inside the row become the spoken label automatically — no
+      // extra accessibilityLabel needed because the labels (e.g. "Sync now",
+      // "Disconnect") are already descriptive.
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
       style={({ pressed }) => [
         styles.row,
         pressed && !disabled && styles.rowPressed,
@@ -521,7 +547,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   sectionBody: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
@@ -564,6 +590,38 @@ const styles = StyleSheet.create({
   rowMeta: {
     fontSize: 13,
     color: colors.muted,
+  },
+
+  // Reminder toggle — visually elevated relative to the rest of the rows
+  // so the on/off state is unmistakable from a glance. Borrows the section
+  // surface treatment but with deeper padding and a label one step up.
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    gap: 12,
+  },
+  toggleRowOn: {
+    // Light accent wash so an active row visually announces itself even
+    // before the eye lands on the Switch itself.
+    backgroundColor: colors.accentTint,
+  },
+  toggleLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.text,
+    letterSpacing: -0.1,
+  },
+  toggleSubtle: {
+    fontSize: 13,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  toggleSwitch: {
+    // iOS Switch is 51x31 by default; bumping a hair to make the affordance
+    // feel like the primary action of the section.
+    transform: [{ scaleX: 1.05 }, { scaleY: 1.05 }],
   },
 
   profileTop: {

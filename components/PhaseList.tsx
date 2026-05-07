@@ -73,7 +73,7 @@ export function PhaseList({
                   <Pressable
                     key={phase.id}
                     accessibilityRole="button"
-                    accessibilityLabel={`${meta.code} ${meta.name}`}
+                    accessibilityLabel={`${meta.name}, phase ${meta.code}`}
                     onPress={() => onPickPhase(phase.id)}
                     style={({ pressed }) => [
                       styles.row,
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,

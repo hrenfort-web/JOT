@@ -127,7 +127,7 @@ export default function LoginScreen() {
         <Text style={styles.title}>jot</Text>
         <Text style={styles.tagline}>
           <Text style={styles.taglineSecondary}>jot it.</Text>
-          <Text style={styles.taglinePrimary}> Done.</Text>
+          <Text style={styles.taglinePrimary}> done.</Text>
         </Text>
       </View>
 
@@ -157,8 +157,6 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Connect to BQE Core</Text>
           )}
         </Pressable>
-
-        <Text style={styles.subtitle}>Timecards for architects. Finally.</Text>
 
         {demoEnabled ? (
           <>
@@ -219,12 +217,6 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: '600',
   },
-  subtitle: {
-    fontSize: 13,
-    color: colors.muted,
-    textAlign: 'center',
-    marginTop: -4,
-  },
   actions: {
     gap: 16,
   },
@@ -248,7 +240,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   demoButton: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',

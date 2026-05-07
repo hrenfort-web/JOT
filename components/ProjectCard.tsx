@@ -13,9 +13,20 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ name, phaseLabel, hours, color, onPress }: ProjectCardProps) {
+  // a11y: roll the visible chrome (project name, optional phase pill, hours
+  // total, chevron) into a single spoken string so screen-reader users get
+  // the same glanceable summary sighted users do. "0 hours this week" reads
+  // better than just the visible em-dash.
+  const phaseChunk = phaseLabel ? `, phase ${phaseLabel}` : '';
+  const hoursChunk =
+    hours === 0
+      ? ', no hours logged this week'
+      : `, ${formatHours(hours)} hours this week`;
   return (
     <Pressable
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${name}${phaseChunk}${hoursChunk}`}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={[styles.dot, { backgroundColor: color }]} />
@@ -41,7 +52,7 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,

@@ -13,7 +13,7 @@ export function PhaseButton({ code, name, icon, onPress }: PhaseButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${code} ${name}`}
+      accessibilityLabel={`${name}, phase ${code}`}
       onPress={onPress}
       style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
@@ -32,7 +32,7 @@ const styles = StyleSheet.create({
   button: {
     flex: 1,
     aspectRatio: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.border,

@@ -61,10 +61,29 @@ export function WeekBar({
             : colors.border;
         const borderWidth = isToday || isSelected ? 2 : 1;
 
+        // Compose a single screen-reader sentence covering everything the
+        // visual pill conveys: day, hours, target attainment, and "today"
+        // marker. VO users otherwise lose the green/red contextual meaning.
+        const fullName = d.toLocaleDateString(undefined, { weekday: 'long' });
+        const hoursPhrase =
+          hours === 0
+            ? isFuture
+              ? 'no hours yet'
+              : 'no hours logged'
+            : `${formatHours(hours)} hours`;
+        const targetPhrase = !isFuture
+          ? metTarget
+            ? ', target met'
+            : ', under target'
+          : '';
+        const todayPhrase = isToday ? ', today' : '';
         return (
           <Pressable
             key={iso}
             onPress={() => onSelectDay(iso)}
+            accessibilityRole="button"
+            accessibilityLabel={`${fullName}, ${hoursPhrase}${targetPhrase}${todayPhrase}`}
+            accessibilityState={{ selected: isSelected }}
             style={({ pressed }) => [
               styles.pill,
               { backgroundColor: bg, borderColor, borderWidth },

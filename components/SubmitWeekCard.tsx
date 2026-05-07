@@ -48,6 +48,9 @@ export function SubmitWeekCard({
       <Pressable
         onPress={onSubmit}
         disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`Submit week to BQE — ${draftCount} ${draftCount === 1 ? 'entry' : 'entries'}, ${formatHours(draftHours)} hours`}
+        accessibilityState={{ disabled }}
         style={({ pressed }) => [
           styles.button,
           disabled && styles.buttonDisabled,
@@ -72,7 +75,7 @@ export function SubmitWeekCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,

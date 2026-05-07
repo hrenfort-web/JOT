@@ -1,5 +1,5 @@
 # Jot — Product Specification
-## "Jot it. Done."
+## "jot it. done."
 
 ## AI-Powered Timecard Entry for Architecture & Design Firms
 
@@ -661,7 +661,7 @@ Target market size: ~50,000 BQE Core users (per BQE's own marketing). Even 5% pe
 
 ## 10. Open Questions & Decisions Needed
 
-1. **App name**: ✅ DECIDED — **Jot**. Tagline: "Jot it. Done." Domain TBD (getjot.com is premium, exploring alternatives like jottime.app, usejot.com, jothq.com).
+1. **App name**: ✅ DECIDED — **Jot**. Tagline: "jot it. done." Domain TBD (getjot.com is premium, exploring alternatives like jottime.app, usejot.com, jothq.com).
 
 2. **Phase display**: Should phases show as the BQE project code (e.g., "2024-031-SD") or a friendly name (e.g., "Schematic Design")? Probably configurable per firm.
 

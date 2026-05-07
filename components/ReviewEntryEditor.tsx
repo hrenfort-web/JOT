@@ -288,7 +288,7 @@ export function ReviewEntryEditor({
 
 const styles = StyleSheet.create({
   editor: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: colors.accent,

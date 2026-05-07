@@ -42,7 +42,6 @@ if (__DEV__) {
     'endsWith ".apps.bqe.com" =',
     envClientId.endsWith('.apps.bqe.com'),
   );
-  console.log('[jot:auth] env clientSecret present =', !!process.env.EXPO_PUBLIC_BQE_CLIENT_SECRET);
   console.log('[jot:auth] scopes =', SCOPES.join(' '));
 }
 
@@ -59,12 +58,14 @@ export interface StoredTokens {
 }
 
 const clientId = process.env.EXPO_PUBLIC_BQE_CLIENT_ID ?? '';
-const clientSecret = process.env.EXPO_PUBLIC_BQE_CLIENT_SECRET ?? '';
 
+// BQE Native apps are public OAuth clients — no client_secret. PKCE alone
+// authenticates the token exchange. Earlier builds plumbed a clientSecret
+// env var through, but it was always empty in practice and BQE ignored it.
+// Removed to stop shipping a placeholder env var into the JS bundle.
 export function getAuthRequestConfig(): AuthSession.AuthRequestConfig {
   return {
     clientId,
-    clientSecret,
     scopes: SCOPES,
     redirectUri,
     responseType: AuthSession.ResponseType.Code,
@@ -119,7 +120,6 @@ export async function exchangeCodeForTokens(
   const result = await AuthSession.exchangeCodeAsync(
     {
       clientId,
-      clientSecret,
       code,
       redirectUri,
       extraParams: codeVerifier ? { code_verifier: codeVerifier } : undefined,
@@ -135,7 +135,7 @@ export async function exchangeCodeForTokens(
 
 export async function refreshAccessToken(refreshToken: string): Promise<StoredTokens> {
   const result = await AuthSession.refreshAsync(
-    { clientId, clientSecret, refreshToken, scopes: SCOPES },
+    { clientId, refreshToken, scopes: SCOPES },
     discovery,
   );
   return tokenResponseToStored({ ...result, ...(result as any).rawResponse });
