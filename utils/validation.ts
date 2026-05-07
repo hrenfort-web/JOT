@@ -1,4 +1,4 @@
-import { fromIsoDay, toIsoDay } from './dateHelpers';
+import { toIsoDay } from './dateHelpers';
 
 export interface ValidationResult {
   ok: boolean;
@@ -12,6 +12,7 @@ export const HOURS_SOFT_WARN_PER_ENTRY = 16;
 export const MEMO_MIN = 3;
 export const MEMO_MAX = 100;
 export const ENTRY_PAST_DAYS_MAX = 30;
+export const ENTRY_FUTURE_DAYS_MAX = 28;
 
 const OK: ValidationResult = { ok: true };
 
@@ -53,19 +54,24 @@ export function validateEntryDate(iso: string, today: Date = new Date()): Valida
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
     return { ok: false, message: 'Pick a valid date' };
   }
-  const date = fromIsoDay(iso);
-  const todayKey = toIsoDay(today);
-  const cutoff = new Date(today);
-  cutoff.setDate(today.getDate() - ENTRY_PAST_DAYS_MAX);
-  const cutoffKey = toIsoDay(cutoff);
+  const past = new Date(today);
+  past.setDate(today.getDate() - ENTRY_PAST_DAYS_MAX);
+  const pastKey = toIsoDay(past);
+  const future = new Date(today);
+  future.setDate(today.getDate() + ENTRY_FUTURE_DAYS_MAX);
+  const futureKey = toIsoDay(future);
 
-  if (iso > todayKey) {
-    return { ok: false, message: "Can't log time in the future" };
-  }
-  if (iso < cutoffKey) {
+  if (iso > futureKey) {
+    const weeks = Math.round(ENTRY_FUTURE_DAYS_MAX / 7);
     return {
       ok: false,
-      message: `Can't log more than ${ENTRY_PAST_DAYS_MAX} days back — that period may be locked`,
+      message: `Can't log time more than ${weeks} weeks in the future`,
+    };
+  }
+  if (iso < pastKey) {
+    return {
+      ok: false,
+      message: `Can't log time more than ${ENTRY_PAST_DAYS_MAX} days in the past — that period may be locked`,
     };
   }
   return OK;

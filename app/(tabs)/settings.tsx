@@ -55,6 +55,7 @@ interface CacheStats {
 export default function SettingsScreen() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const demoMode = useAuthStore((s) => s.demoMode);
 
   const isLoaded = useReminderStore((s) => s.isLoaded);
   const prefs = useReminderStore((s) => s.prefs);
@@ -170,8 +171,20 @@ export default function SettingsScreen() {
                 </Text>
                 <Text style={styles.profileRole}>{capitalize(userRole)}</Text>
                 <View style={styles.connectedRow}>
-                  <View style={styles.connectedDot} />
-                  <Text style={styles.connectedText}>Connected to BQE Core</Text>
+                  <View
+                    style={[
+                      styles.connectedDot,
+                      demoMode && styles.connectedDotDemo,
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.connectedText,
+                      demoMode && styles.connectedTextDemo,
+                    ]}
+                  >
+                    {demoMode ? 'Demo Mode' : 'Connected to BQE Core'}
+                  </Text>
                 </View>
               </View>
             </View>
@@ -452,16 +465,21 @@ function appVersion(): string {
   return expoCfg?.version ?? '1.0.0';
 }
 
-function initialsOf(name: string): string {
+function initialsOf(name: unknown): string {
+  if (typeof name !== 'string') return '?';
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '?';
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return (words[0][0] + words[1][0]).toUpperCase();
+  const a = words[0][0] ?? '';
+  const b = words[1][0] ?? '';
+  return (a + b).toUpperCase() || '?';
 }
 
-function capitalize(s: string): string {
-  if (!s) return '';
-  return s[0].toUpperCase() + s.slice(1);
+function capitalize(s: unknown): string {
+  if (typeof s !== 'string' || s.length === 0) return '';
+  const first = s[0];
+  if (!first) return s;
+  return first.toUpperCase() + s.slice(1);
 }
 
 function formatRelative(date: Date): string {
@@ -592,6 +610,12 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: colors.accent,
+  },
+  connectedDotDemo: {
+    backgroundColor: colors.warning,
+  },
+  connectedTextDemo: {
+    color: colors.warning,
   },
   connectedText: {
     fontSize: 12,

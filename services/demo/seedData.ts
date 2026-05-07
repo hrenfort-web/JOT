@@ -28,7 +28,7 @@ function buildDemoProjects(): BqeProject[] {
       code: parent.code,
       parentId: null,
       client: { name: parent.client },
-      isActive: true,
+      status: 0,
     });
     for (const phase of PHASE_CODES) {
       out.push({
@@ -37,7 +37,7 @@ function buildDemoProjects(): BqeProject[] {
         code: `${parent.code}-${phase}`,
         parentId: parent.id,
         client: { name: parent.client },
-        isActive: true,
+        status: 0,
       });
     }
   }

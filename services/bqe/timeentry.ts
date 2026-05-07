@@ -1,5 +1,5 @@
-import { bqeClient } from './client';
-import { unwrapList, toBqeDate, toIsoDay } from './utils';
+import { bqeClient, fetchAllPages } from './client';
+import { toBqeDate, toIsoDay } from './utils';
 import { run, getAll, upsertMany, sqliteBool } from '../../db/database';
 import {
   EntrySource,
@@ -54,13 +54,9 @@ export async function fetchWeekEntries(
 ): Promise<BqeTimeEntry[]> {
   const start = toIsoDay(weekStart);
   const end = toIsoDay(weekEnd);
-  const response = await bqeClient.get('/timeentry', {
-    params: {
-      where: `resourceId='${resourceId}' AND date>='${start}' AND date<='${end}'`,
-      page: '1,500',
-    },
+  const entries = await fetchAllPages<BqeTimeEntry>('/timeentry', {
+    where: `resourceId='${resourceId}' AND date>='${start}' AND date<='${end}'`,
   });
-  const entries = unwrapList<BqeTimeEntry>(response.data);
   await persistFetchedEntries(entries);
   return entries;
 }
@@ -143,13 +139,65 @@ export function isEntryEditable(entry: {
 }
 
 export async function createEntry(payload: CreateTimeEntryPayload): Promise<BqeTimeEntry> {
+  if (__DEV__) logCreatePayload(payload);
   const response = await bqeClient.post('/timeentry', toApiPayload(payload));
+  if (__DEV__) {
+    const created = response.data as { id?: string; workflow?: unknown };
+    console.log('[jot:timeentry] created → id =', created?.id);
+  }
   return response.data as BqeTimeEntry;
 }
 
 export async function createBatchEntries(payloads: CreateTimeEntryPayload[]): Promise<unknown> {
+  if (__DEV__) {
+    console.log(`[jot:timeentry] batch POST × ${payloads.length}`);
+    for (const p of payloads) logCreatePayload(p);
+  }
   const response = await bqeClient.post('/timeentry/batch', payloads.map(toApiPayload));
   return response.data;
+}
+
+// Lazy-import the project store so timeentry.ts doesn't pull it at module
+// load time (avoids initialization-order risk through the bqeClient cycle).
+function logCreatePayload(p: CreateTimeEntryPayload): void {
+  const body = toApiPayload(p);
+  console.log('[jot:timeentry] -> POST /timeentry');
+  console.log('[jot:timeentry]    body =', JSON.stringify(body));
+
+  // Look up the projectId in the local cache to confirm it's a phase-level
+  // (child) project as BQE expects, not a parent. If BQE rejects with
+  // "Project Assignment does not allow this operation", the most common cause
+  // is sending a parent projectId on a project that has phase children.
+  // Lazy require keeps this file's module graph clean.
+  let projectStore: { getState(): { flatProjects: { id: string; name: string; isPhase: boolean; parentId: string | null }[] } } | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    projectStore = require('../../store/useProjectStore').useProjectStore;
+  } catch {
+    projectStore = null;
+  }
+  const flat = projectStore?.getState().flatProjects ?? [];
+  const project = flat.find((x) => x.id === p.projectId);
+  if (!project) {
+    console.log(
+      '[jot:timeentry]    projectId NOT in local cache — may be a stale phase id from a different sync',
+      p.projectId,
+    );
+  } else {
+    const childPhases = flat.filter((x) => x.isPhase && x.parentId === project.id);
+    console.log('[jot:timeentry]    project =', {
+      id: project.id,
+      name: project.name,
+      isPhase: project.isPhase,
+      parentId: project.parentId,
+      childPhaseCount: childPhases.length,
+    });
+    if (!project.isPhase && childPhases.length > 0) {
+      console.log(
+        `[jot:timeentry]    WARN: this projectId is a PARENT with ${childPhases.length} phase children. BQE expects the child phaseId for time entries, not the parent.`,
+      );
+    }
+  }
 }
 
 export async function updateEntry(
@@ -283,18 +331,27 @@ export async function loadDraftSyncedEntries(
   return rows.map(entryFromRow);
 }
 
-// TODO: Verify the actual BQE Core workflow-submit endpoint when we have credentials.
-// The product spec only documents that /timeentry has a `workflow` array on the response.
-// The submit endpoint is most likely something like POST /timeentry/submit with an array
-// of entry IDs in the body (or a per-entry POST /timeentry/{id}/submit). Until we have
-// real credentials to test against, this placeholder no-ops on success — the local rows
-// still flip to submissionStatus='submitted' so the UI flow is exercised end-to-end.
+// Submit time entries to BQE's workflow (locks them for PM approval).
+//
+// BQE support told us to "use the nested workflow field in the timeEntry to submit"
+// (https://api-explorer.bqecore.com/docs/api/apis/timeentry). The /timeentry response
+// schema documents `workflow` as an array of objects with fields { action, type,
+// submitTo, submitToId, sendTo, sendToId, memo, token, version, ... } but the docs
+// do NOT specify the exact body shape for "submit." The implementation below sends
+// the simplest reasonable shape — PUT /timeentry/{id} with a single workflow object
+// using `action: 'Submit'`. If BQE requires `submitToId` (the PM employee), `type`,
+// or a different verb, the response body in our [jot:bqe] error logs will show the
+// rejection reason and we iterate.
+//
+// TODO: Confirm exact body shape with BQE support (CoreDeveloper@bqe.com) once we
+// have a sandbox test entry.
 export async function submitEntriesToWorkflow(bqeIds: string[]): Promise<void> {
   if (bqeIds.length === 0) return;
-  // Placeholder: replace with real BQE workflow submit call once endpoint is verified.
-  // Example shape (unverified):
-  // await bqeClient.post('/timeentry/submit', { entryIds: bqeIds });
-  return;
+  for (const id of bqeIds) {
+    await bqeClient.put(`/timeentry/${id}`, {
+      workflow: [{ action: 'Submit' }],
+    });
+  }
 }
 
 export async function patchLocalEntry(

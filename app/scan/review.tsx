@@ -205,7 +205,13 @@ export default function ReviewScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: 'Review & submit' }} />
+      <Stack.Screen
+        options={{
+          title: 'Review & submit',
+          headerBackTitle: '',
+          headerBackButtonDisplayMode: 'minimal',
+        }}
+      />
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.summary}>

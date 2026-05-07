@@ -3,6 +3,8 @@ import { fetchAndSaveProjects } from '../bqe/project';
 import { fetchAndSaveActivities } from '../bqe/activity';
 import { fetchAndSaveEmployees } from '../bqe/employee';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useProjectStore } from '../../store/useProjectStore';
+import { useEntryStore } from '../../store/useEntryStore';
 
 const LAST_SYNC_KEY = 'jot_last_sync';
 
@@ -30,6 +32,9 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
     await setLastSyncTime(new Date());
     return;
   }
+  const t0 = Date.now();
+  if (__DEV__) console.log('[jot:sync] runInitialSync START');
+
   const total = STEPS.length;
   let completed = 0;
 
@@ -37,8 +42,17 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
 
   await Promise.all(
     STEPS.map(async (step) => {
+      const stepStart = Date.now();
       try {
-        await step.run();
+        const count = await step.run();
+        if (__DEV__) {
+          console.log(
+            `[jot:sync] ${step.label}: ${count} rows in ${Date.now() - stepStart}ms`,
+          );
+        }
+      } catch (e) {
+        if (__DEV__) console.log(`[jot:sync] ${step.label} FAILED:`, e);
+        throw e;
       } finally {
         completed += 1;
         onProgress?.({ step: step.label, completed, total });
@@ -46,7 +60,40 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
     }),
   );
 
+  if (__DEV__) console.log(`[jot:sync] BQE fetches done in ${Date.now() - t0}ms`);
+
+  // Pull the freshly-saved rows out of SQLite into the in-memory stores so
+  // screens that subscribe (home, picker, settings) render immediately when
+  // they mount. Without this, the home screen reads an empty store and shows
+  // a perpetual spinner even though SQLite is populated.
+  try {
+    const refreshStart = Date.now();
+    await useProjectStore.getState().refresh();
+    if (__DEV__) {
+      console.log(
+        `[jot:sync] useProjectStore.refresh in ${Date.now() - refreshStart}ms — flat=${
+          useProjectStore.getState().flatProjects.length
+        }`,
+      );
+    }
+  } catch (e) {
+    if (__DEV__) console.log('[jot:sync] project store refresh FAILED:', e);
+  }
+
+  try {
+    const refreshStart = Date.now();
+    await useEntryStore.getState().refreshLocal();
+    if (__DEV__) {
+      console.log(
+        `[jot:sync] useEntryStore.refreshLocal in ${Date.now() - refreshStart}ms`,
+      );
+    }
+  } catch (e) {
+    if (__DEV__) console.log('[jot:sync] entry store refresh FAILED:', e);
+  }
+
   await setLastSyncTime(new Date());
+  if (__DEV__) console.log(`[jot:sync] runInitialSync COMPLETE in ${Date.now() - t0}ms`);
 }
 
 export async function getLastSyncTime(): Promise<Date | null> {

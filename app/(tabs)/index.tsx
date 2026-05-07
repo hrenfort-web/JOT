@@ -103,10 +103,18 @@ export default function HomeScreen() {
     if (!user?.id || bootstrapped) return;
     let cancelled = false;
     (async () => {
+      const t0 = Date.now();
+      if (__DEV__) console.log('[jot:home] bootstrap START');
       setIsBootstrapping(true);
       try {
         await refreshProjects();
+        if (__DEV__) {
+          console.log(
+            `[jot:home] post-refresh project count = ${useProjectStore.getState().flatProjects.length}`,
+          );
+        }
         if (useProjectStore.getState().flatProjects.length === 0) {
+          if (__DEV__) console.log('[jot:home] cache empty — running initialSync');
           setIsSyncingFresh(true);
           try {
             await runInitialSync();
@@ -116,10 +124,15 @@ export default function HomeScreen() {
           await refreshProjects();
         }
         await refreshWeek();
+      } catch (e) {
+        if (__DEV__) console.log('[jot:home] bootstrap FAILED:', e);
       } finally {
         if (!cancelled) {
           setIsBootstrapping(false);
           setBootstrapped(true);
+          if (__DEV__) {
+            console.log(`[jot:home] bootstrap COMPLETE in ${Date.now() - t0}ms`);
+          }
         }
       }
     })();
@@ -189,20 +202,42 @@ export default function HomeScreen() {
     [weekEntries, flatProjects, tree],
   );
 
+  // Cap renders so a firm with thousands of active projects doesn't try to
+  // mount 3,000+ Pressables at once (Studio G's BQE returns 3,226 projects).
+  // Past ~500 we hide the "More projects" expander entirely and cap any
+  // fallback list to a manageable preview — the FAB → picker route lets the
+  // user search the full set when needed.
+  const HEAVY_LIST_THRESHOLD = 500;
+  const FALLBACK_PREVIEW_CAP = 50;
+  const isHeavyList = flatProjects.length > HEAVY_LIST_THRESHOLD;
+
   const projectBuckets = useMemo(
     () => bucketProjects(tree, hoursByParent, priorWeekParentIds),
     [tree, hoursByParent, priorWeekParentIds],
   );
   const visibleProjects = useMemo(() => {
     const { withCurrent, withPrior, others } = projectBuckets;
-    if (showAllProjects) return [...withCurrent, ...withPrior, ...others];
-    if (withCurrent.length === 0 && withPrior.length === 0) return others;
+    if (showAllProjects && !isHeavyList) {
+      return [...withCurrent, ...withPrior, ...others];
+    }
+    if (withCurrent.length === 0 && withPrior.length === 0) {
+      // Fallback: no entries this week or last week. Show alphabetical preview
+      // (capped) so the list doesn't try to render the full directory.
+      return isHeavyList ? others.slice(0, FALLBACK_PREVIEW_CAP) : others;
+    }
     return [...withCurrent, ...withPrior];
-  }, [projectBuckets, showAllProjects]);
+  }, [projectBuckets, showAllProjects, isHeavyList]);
   const moreProjectsCount = projectBuckets.others.length;
   const showMoreToggle =
+    !isHeavyList &&
     moreProjectsCount > 0 &&
     (projectBuckets.withCurrent.length > 0 || projectBuckets.withPrior.length > 0);
+
+  if (__DEV__) {
+    console.log(
+      `[jot:home] flatProjects=${flatProjects.length} buckets={current:${projectBuckets.withCurrent.length}, prior:${projectBuckets.withPrior.length}, others:${projectBuckets.others.length}} visible=${visibleProjects.length} heavyList=${isHeavyList}`,
+    );
+  }
 
   const totalHours = useMemo(
     () => weekEntries.reduce((sum, e) => sum + e.hours, 0),

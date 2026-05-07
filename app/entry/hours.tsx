@@ -305,7 +305,13 @@ export default function HoursEntryScreen() {
   if (loadingEntry || (isEditing && !loadedEntry) || !targetProject) {
     return (
       <View style={styles.center}>
-        <Stack.Screen options={{ title: isEditing ? 'Edit entry' : 'Log time' }} />
+        <Stack.Screen
+          options={{
+            title: isEditing ? 'Edit entry' : 'Log time',
+            headerBackTitle: '',
+            headerBackButtonDisplayMode: 'minimal',
+          }}
+        />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -316,7 +322,13 @@ export default function HoursEntryScreen() {
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Stack.Screen options={{ title: headerTitle }} />
+      <Stack.Screen
+        options={{
+          title: headerTitle,
+          headerBackTitle: '',
+          headerBackButtonDisplayMode: 'minimal',
+        }}
+      />
 
       <DaySelector
         days={visibleDays}

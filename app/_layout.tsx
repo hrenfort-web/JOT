@@ -134,18 +134,61 @@ export default function RootLayout() {
             headerStyle: { backgroundColor: colors.background },
             headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: '600' },
+            headerBackTitle: '',
+            headerBackButtonDisplayMode: 'minimal',
             contentStyle: { backgroundColor: colors.background },
           }}
         >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="entry/picker" options={{ title: 'Pick a project' }} />
-          <Stack.Screen name="entry/[projectId]" options={{ title: 'Select phase' }} />
-          <Stack.Screen name="entry/hours" options={{ title: 'Log hours' }} />
+          <Stack.Screen
+            name="(tabs)"
+            options={{
+              headerShown: false,
+              title: '',
+              headerBackTitle: '',
+              headerBackButtonDisplayMode: 'minimal',
+            }}
+          />
+          <Stack.Screen
+            name="entry/picker"
+            options={{
+              title: 'Pick a project',
+              headerBackTitle: '',
+              headerBackButtonDisplayMode: 'minimal',
+            }}
+          />
+          <Stack.Screen
+            name="entry/[projectId]"
+            options={{
+              title: 'Select phase',
+              headerBackTitle: '',
+              headerBackButtonDisplayMode: 'minimal',
+            }}
+          />
+          <Stack.Screen
+            name="entry/hours"
+            options={{
+              title: 'Log hours',
+              headerBackTitle: '',
+              headerBackButtonDisplayMode: 'minimal',
+            }}
+          />
           <Stack.Screen
             name="scan/processing"
-            options={{ title: 'Processing', headerBackVisible: false }}
+            options={{
+              title: 'Processing',
+              headerBackVisible: false,
+              headerBackTitle: '',
+              headerBackButtonDisplayMode: 'minimal',
+            }}
           />
-          <Stack.Screen name="scan/review" options={{ title: 'Review entries' }} />
+          <Stack.Screen
+            name="scan/review"
+            options={{
+              title: 'Review entries',
+              headerBackTitle: '',
+              headerBackButtonDisplayMode: 'minimal',
+            }}
+          />
           <Stack.Screen
             name="auth/login"
             options={{ headerShown: false, gestureEnabled: false }}

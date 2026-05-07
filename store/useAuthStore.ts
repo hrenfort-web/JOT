@@ -15,6 +15,7 @@ import {
   clearDemoData,
   seedDemoData,
 } from '../services/demo/seedData';
+import { runInitialSync } from '../services/sync/initialSync';
 
 export type LogoutReason = 'manual' | 'session_expired';
 
@@ -46,6 +47,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   login: async (tokens, user) => {
     await storeTokens(tokens);
+
+    // Wipe any leftover demo rows from a prior Explore Demo session before we
+    // hydrate the cache with real BQE data. Each row is keyed by `bqeId LIKE
+    // 'demo-%'` so this only touches demo data; real BQE rows are unaffected.
+    await clearDemoData();
+
     set({
       tokens,
       baseUrl: tokens.endpoint,
@@ -54,6 +61,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionExpired: false,
       demoMode: false,
     });
+
+    // Force a fresh sync of projects/activities/employees so the home screen
+    // doesn't fall back to whatever was in SQLite. If the network or any
+    // single endpoint fails, the home screen's bootstrap effect will retry on
+    // mount; we don't want to block login on a sync hiccup.
+    try {
+      await runInitialSync();
+    } catch (e) {
+      if (__DEV__) console.log('[jot:auth] post-login sync failed:', e);
+    }
   },
 
   loginAsDemo: async () => {
@@ -75,12 +92,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async (reason = 'manual') => {
-    const wasDemo = get().demoMode;
-    if (wasDemo) {
-      await clearDemoData();
-    } else {
-      await clearTokens();
-    }
+    // Always run both cleanups so switching between real and demo mode never
+    // leaves stale tokens in SecureStore or stale demo rows in SQLite.
+    // Each is a no-op when there's nothing to clean.
+    await Promise.all([clearTokens(), clearDemoData()]);
     set({
       tokens: null,
       baseUrl: null,

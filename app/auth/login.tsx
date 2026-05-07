@@ -35,7 +35,34 @@ export default function LoginScreen() {
   );
 
   useEffect(() => {
+    if (!__DEV__ || !request) return;
+    console.log('[jot:auth] ──── AuthRequest ────');
+    console.log('[jot:auth] clientId =', request.clientId);
+    console.log('[jot:auth] redirectUri =', request.redirectUri);
+    console.log('[jot:auth] scopes =', request.scopes);
+    console.log('[jot:auth] responseType =', request.responseType);
+    console.log('[jot:auth] state =', request.state);
+    console.log('[jot:auth] codeChallenge =', request.codeChallenge);
+    console.log('[jot:auth] codeChallengeMethod =', request.codeChallengeMethod);
+    console.log('[jot:auth] codeVerifier (first 8) =', request.codeVerifier?.slice(0, 8));
+    console.log('[jot:auth] FULL authorize URL =', request.url);
+  }, [request]);
+
+  useEffect(() => {
     if (!response) return;
+
+    if (__DEV__) {
+      console.log('[jot:auth] ──── AuthResponse ────');
+      console.log('[jot:auth] response.type =', response.type);
+      if (response.type === 'success' || response.type === 'error') {
+        console.log('[jot:auth] response.params =', response.params);
+        console.log('[jot:auth] response.url =', response.url);
+      }
+      if (response.type === 'error') {
+        console.log('[jot:auth] response.error =', response.error);
+        console.log('[jot:auth] response.errorCode =', response.errorCode);
+      }
+    }
 
     if (response.type === 'success') {
       handleSuccess(response.params.code, request?.codeVerifier);
@@ -91,6 +118,8 @@ export default function LoginScreen() {
 
   const disabled = loading || !request;
   const demoDisabled = demoLoading || loading;
+  const demoEnabled =
+    __DEV__ || process.env.EXPO_PUBLIC_ENABLE_DEMO_MODE === 'true';
 
   return (
     <View style={styles.container}>
@@ -126,23 +155,27 @@ export default function LoginScreen() {
           )}
         </Pressable>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={onPressDemo}
-          disabled={demoDisabled}
-          style={({ pressed }) => [
-            styles.demoButton,
-            demoDisabled && styles.buttonDisabled,
-            pressed && !demoDisabled && styles.buttonPressed,
-          ]}
-        >
-          {demoLoading ? (
-            <ActivityIndicator color={colors.accent} />
-          ) : (
-            <Text style={styles.demoButtonText}>Explore Demo</Text>
-          )}
-        </Pressable>
-        <Text style={styles.demoHint}>Try the app with sample data</Text>
+        {demoEnabled ? (
+          <>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onPressDemo}
+              disabled={demoDisabled}
+              style={({ pressed }) => [
+                styles.demoButton,
+                demoDisabled && styles.buttonDisabled,
+                pressed && !demoDisabled && styles.buttonPressed,
+              ]}
+            >
+              {demoLoading ? (
+                <ActivityIndicator color={colors.accent} />
+              ) : (
+                <Text style={styles.demoButtonText}>Explore Demo</Text>
+              )}
+            </Pressable>
+            <Text style={styles.demoHint}>Try the app with sample data</Text>
+          </>
+        ) : null}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>

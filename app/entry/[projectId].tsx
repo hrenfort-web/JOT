@@ -54,7 +54,13 @@ export default function PhaseSelectionScreen() {
   if (!projectsLoaded || isLoadingProjects) {
     return (
       <View style={styles.center}>
-        <Stack.Screen options={{ title: headerTitle }} />
+        <Stack.Screen
+          options={{
+            title: headerTitle,
+            headerBackTitle: '',
+            headerBackButtonDisplayMode: 'minimal',
+          }}
+        />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -63,7 +69,13 @@ export default function PhaseSelectionScreen() {
   if (!project) {
     return (
       <View style={styles.center}>
-        <Stack.Screen options={{ title: 'Project' }} />
+        <Stack.Screen
+          options={{
+            title: 'Project',
+            headerBackTitle: '',
+            headerBackButtonDisplayMode: 'minimal',
+          }}
+        />
         <EmptyState
           icon="alert-circle-outline"
           title="Project not found"
@@ -76,7 +88,13 @@ export default function PhaseSelectionScreen() {
   if (phases.length <= 1) {
     return (
       <View style={styles.center}>
-        <Stack.Screen options={{ title: headerTitle }} />
+        <Stack.Screen
+          options={{
+            title: headerTitle,
+            headerBackTitle: '',
+            headerBackButtonDisplayMode: 'minimal',
+          }}
+        />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -84,7 +102,13 @@ export default function PhaseSelectionScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: headerTitle }} />
+      <Stack.Screen
+        options={{
+          title: headerTitle,
+          headerBackTitle: '',
+          headerBackButtonDisplayMode: 'minimal',
+        }}
+      />
 
       <DaySelector
         days={visibleDays}

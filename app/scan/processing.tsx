@@ -137,7 +137,14 @@ export default function ProcessingScreen() {
   if (error) {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: 'Scan failed', headerBackVisible: true }} />
+        <Stack.Screen
+          options={{
+            title: 'Scan failed',
+            headerBackVisible: true,
+            headerBackTitle: '',
+            headerBackButtonDisplayMode: 'minimal',
+          }}
+        />
         <View style={styles.content}>
           <View style={[styles.iconCircle, styles.iconCircleError]}>
             <Ionicons name="alert-circle-outline" size={36} color={colors.danger} />
@@ -166,7 +173,14 @@ export default function ProcessingScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: 'Processing', headerBackVisible: false }} />
+      <Stack.Screen
+        options={{
+          title: 'Processing',
+          headerBackVisible: false,
+          headerBackTitle: '',
+          headerBackButtonDisplayMode: 'minimal',
+        }}
+      />
       <View style={styles.content}>
         <View style={styles.spinnerWrap}>
           <Animated.View style={{ transform: [{ rotate: rotation }] }}>

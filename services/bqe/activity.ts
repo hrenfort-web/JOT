@@ -1,5 +1,4 @@
-import { bqeClient } from './client';
-import { unwrapList } from './utils';
+import { fetchAllPages } from './client';
 import { upsertMany, sqliteBool, getAll } from '../../db/database';
 import { LocalActivity, LocalActivityRow, activityFromRow } from '../../db/schema';
 
@@ -13,14 +12,10 @@ export interface BqeActivity {
 }
 
 export async function fetchActivities(): Promise<BqeActivity[]> {
-  const response = await bqeClient.get('/activity', {
-    params: {
-      where: 'isActive=true',
-      fields: 'id,name,code,billable',
-      page: '1,1000',
-    },
+  return fetchAllPages<BqeActivity>('/activity', {
+    where: 'isActive=true',
+    fields: 'id,name,code,billable',
   });
-  return unwrapList<BqeActivity>(response.data);
 }
 
 export async function saveActivities(activities: BqeActivity[]): Promise<void> {

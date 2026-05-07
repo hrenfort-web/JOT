@@ -38,7 +38,13 @@ export default function PickerScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Pick a project' }} />
+      <Stack.Screen
+        options={{
+          title: 'Pick a project',
+          headerBackTitle: '',
+          headerBackButtonDisplayMode: 'minimal',
+        }}
+      />
 
       <View style={styles.searchWrap}>
         <Ionicons name="search" size={16} color={colors.muted} />
