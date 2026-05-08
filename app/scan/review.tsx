@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -29,7 +29,7 @@ import {
   toIsoDay,
 } from '../../utils/dateHelpers';
 import { phaseMeta } from '../../utils/phaseMeta';
-import type { ParsedFlag, ParsedTimesheet } from '../../services/ai/scanner';
+import type { ParsedEntry, ParsedFlag, ParsedTimesheet } from '../../services/ai/scanner';
 import {
   validateEntryDate,
   validateHours,
@@ -37,6 +37,11 @@ import {
   validateProjectAndPhase,
 } from '../../utils/validation';
 import { formatError, logError } from '../../services/errors';
+import {
+  buildSessionId,
+  logScanSession,
+  type SubmittedEntry as LogSubmittedEntry,
+} from '../../services/analytics/scanCorrections';
 
 const WEEK_TOTAL_LOW = 30;
 const WEEK_TOTAL_HIGH = 50;
@@ -78,6 +83,28 @@ export default function ReviewScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingDay, setAddingDay] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Scan-correction analytics: capture an immutable snapshot of what the AI
+  // produced, plus a session ID, the moment the review screen mounts. We
+  // diff this against `entries` at submit time and write the deltas to the
+  // ScanSession / ScanCorrection tables. Refs (not state) because we never
+  // want this to trigger re-renders or be touched by user edits.
+  const scanSessionIdRef = useRef<string | null>(null);
+  const originalEntriesRef = useRef<ParsedEntry[] | null>(null);
+  const overallAiConfidenceRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!parsed) return;
+    if (scanSessionIdRef.current) return;
+    scanSessionIdRef.current = buildSessionId();
+    // Deep clone so user edits to `entries` can never mutate the original
+    // AI output. ParsedEntry is plain JSON so structuredClone via JSON
+    // round-trip is safe and fast.
+    originalEntriesRef.current = JSON.parse(
+      JSON.stringify(parsed.entries),
+    ) as ParsedEntry[];
+    overallAiConfidenceRef.current = parsed.overallConfidence;
+  }, [parsed]);
 
   useEffect(() => {
     if (!parsed) {
@@ -167,6 +194,32 @@ export default function ReviewScreen() {
     }
 
     setSubmitting(true);
+
+    // Fire-and-forget scan-correction logging. MUST run before the network
+    // submit but MUST NOT be awaited — the user's submission cannot be
+    // delayed or blocked by analytics. Errors inside logScanSession are
+    // already swallowed; .catch(() => {}) here covers the synchronous
+    // throw window between schedule and first await inside the service.
+    const sessionId = scanSessionIdRef.current;
+    const originalEntries = originalEntriesRef.current;
+    if (sessionId && originalEntries) {
+      const submittedForLog: LogSubmittedEntry[] = entries.map((e) => ({
+        originalIndex: parseOriginalIndex(e.id),
+        phaseProjectId: e.phaseProjectId,
+        hours: e.hours,
+        memo: e.memo,
+      }));
+      logScanSession({
+        sessionId,
+        originalEntries,
+        submittedEntries: submittedForLog,
+        overallAiConfidence: overallAiConfidenceRef.current,
+        projectsById,
+      }).catch(() => {
+        // never surface analytics failures
+      });
+    }
+
     const result = await submitParsedBatch(
       entries.map((e) => ({
         projectId: e.phaseProjectId!,
@@ -418,6 +471,18 @@ function validateReviewEntry(entry: ReviewEntry): string | null {
   if (!date.ok) return date.message ?? 'Pick a valid date';
   if (entry.flag !== null) return `Verify flagged entry: ${entry.flag.reason}`;
   return null;
+}
+
+/**
+ * Recover the AI's original entry index from a ReviewEntry id. Parsed
+ * entries are tagged `parsed-${i}` at mount time; user-added entries are
+ * `manual-...`. Returns null for added entries so the analytics layer can
+ * classify them as `added_entry`.
+ */
+function parseOriginalIndex(id: string): number | null {
+  if (!id.startsWith('parsed-')) return null;
+  const n = Number(id.slice('parsed-'.length));
+  return Number.isFinite(n) ? n : null;
 }
 
 function parsedToReview(parsed: ParsedTimesheet, weekStart: Date): ReviewEntry[] {

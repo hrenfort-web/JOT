@@ -10,6 +10,35 @@ export const MIGRATIONS: string[] = [
   // TEXT, the read-side coercion in projectFromRow normalises everything to
   // a number.
   `ALTER TABLE LocalProject ADD COLUMN contractType INTEGER`,
+  // Scan correction logging — silently track AI accuracy so we can improve
+  // parsing over time. Both tables stay on-device in v1; v2 will sync to
+  // Supabase. CREATE TABLE IF NOT EXISTS is idempotent for fresh installs;
+  // these migration entries cover existing databases that pre-date the
+  // schema additions.
+  `CREATE TABLE IF NOT EXISTS ScanSession (
+    id TEXT PRIMARY KEY,
+    totalEntriesParsed INTEGER NOT NULL DEFAULT 0,
+    totalEntriesSubmitted INTEGER NOT NULL DEFAULT 0,
+    totalCorrections INTEGER NOT NULL DEFAULT 0,
+    entriesAdded INTEGER NOT NULL DEFAULT 0,
+    entriesRemoved INTEGER NOT NULL DEFAULT 0,
+    overallAiConfidence REAL,
+    accuracyScore REAL,
+    createdAt TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS ScanCorrection (
+    id TEXT PRIMARY KEY,
+    scanSessionId TEXT NOT NULL,
+    entryIndex INTEGER NOT NULL,
+    fieldName TEXT NOT NULL,
+    aiValue TEXT,
+    aiConfidence REAL,
+    userValue TEXT,
+    correctionType TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    FOREIGN KEY (scanSessionId) REFERENCES ScanSession(id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_scancorrection_session ON ScanCorrection(scanSessionId)`,
 ];
 
 export const SCHEMA = `
@@ -74,6 +103,35 @@ CREATE TABLE IF NOT EXISTS LocalTimeEntry (
 );
 CREATE INDEX IF NOT EXISTS idx_entry_resource_date ON LocalTimeEntry(resourceId, date);
 CREATE INDEX IF NOT EXISTS idx_entry_sync ON LocalTimeEntry(syncStatus);
+
+-- Scan correction logging. Both tables are local-only in v1 and ferry
+-- AI-vs-user-edit deltas so we can later analyse where the parser is weak.
+-- Privacy note: ScanCorrection.aiValue / userValue may contain memo strings.
+-- Memo content must be stripped before any v2 Supabase upload.
+CREATE TABLE IF NOT EXISTS ScanSession (
+  id TEXT PRIMARY KEY,
+  totalEntriesParsed INTEGER NOT NULL DEFAULT 0,
+  totalEntriesSubmitted INTEGER NOT NULL DEFAULT 0,
+  totalCorrections INTEGER NOT NULL DEFAULT 0,
+  entriesAdded INTEGER NOT NULL DEFAULT 0,
+  entriesRemoved INTEGER NOT NULL DEFAULT 0,
+  overallAiConfidence REAL,
+  accuracyScore REAL,
+  createdAt TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ScanCorrection (
+  id TEXT PRIMARY KEY,
+  scanSessionId TEXT NOT NULL,
+  entryIndex INTEGER NOT NULL,
+  fieldName TEXT NOT NULL,
+  aiValue TEXT,
+  aiConfidence REAL,
+  userValue TEXT,
+  correctionType TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  FOREIGN KEY (scanSessionId) REFERENCES ScanSession(id)
+);
+CREATE INDEX IF NOT EXISTS idx_scancorrection_session ON ScanCorrection(scanSessionId);
 `;
 
 export interface LocalProjectRow {
@@ -209,4 +267,39 @@ export function entryFromRow(row: LocalTimeEntryRow): LocalTimeEntry {
     ...row,
     isBillable: !!row.isBillable,
   };
+}
+
+// --- Scan correction analytics --------------------------------------------
+
+export type ScanCorrectionField = 'project' | 'phase' | 'hours' | 'memo';
+export type ScanCorrectionType =
+  | 'wrong_match'
+  | 'wrong_hours'
+  | 'wrong_phase'
+  | 'wrong_memo'
+  | 'added_entry'
+  | 'removed_entry';
+
+export interface ScanSessionRow {
+  id: string;
+  totalEntriesParsed: number;
+  totalEntriesSubmitted: number;
+  totalCorrections: number;
+  entriesAdded: number;
+  entriesRemoved: number;
+  overallAiConfidence: number | null;
+  accuracyScore: number | null;
+  createdAt: string;
+}
+
+export interface ScanCorrectionRow {
+  id: string;
+  scanSessionId: string;
+  entryIndex: number;
+  fieldName: ScanCorrectionField | string;
+  aiValue: string | null;
+  aiConfidence: number | null;
+  userValue: string | null;
+  correctionType: ScanCorrectionType | string;
+  createdAt: string;
 }
