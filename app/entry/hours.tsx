@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  InputAccessoryView,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useHeaderHeight } from '@react-navigation/elements';
 import * as Haptics from 'expo-haptics';
 
 import { colors } from '../../theme';
@@ -45,6 +48,7 @@ import {
   validateMemo,
 } from '../../utils/validation';
 import { formatError, logError } from '../../services/errors';
+import { resolveActivityForEntry } from '../../services/activitySelection/resolver';
 import type { LocalTimeEntry } from '../../db/schema';
 
 const WEEKDAYS = 5;
@@ -76,7 +80,6 @@ export default function HoursEntryScreen() {
 
   const user = useAuthStore((s) => s.user);
   const flatProjects = useProjectStore((s) => s.flatProjects);
-  const getDefaultActivityId = useProjectStore((s) => s.getDefaultActivityId);
   const selectedDate = useEntryStore((s) => s.selectedDate);
   const setSelectedDate = useEntryStore((s) => s.setSelectedDate);
   const submitEntry = useEntryStore((s) => s.submitEntry);
@@ -259,11 +262,25 @@ export default function HoursEntryScreen() {
       return;
     }
 
-    const activityId = getDefaultActivityId();
-    if (!activityId) {
-      showToast('No activity available — sync with BQE Core first', 'error');
+    // Resolver picks an activity allowed for this project's BQE activity
+    // group(s). Phase ids are fine — the resolver climbs to the parent
+    // project to find the group binding. This is what dodges the 409
+    // ProjectControlLimitation: the activity must be a member of the
+    // project's allowed group.
+    const resolved = resolveActivityForEntry({ projectId: targetProject.id });
+    if (resolved.activityId === null) {
+      showToast(
+        'No activity available for this project — please sync, or contact your admin',
+        'error',
+      );
       return;
     }
+    if (resolved.source === 'firm-fallback' && __DEV__) {
+      // The resolver already logged [jot:activity-fallback]; not shown to
+      // user to avoid alarming them.
+      console.log('[jot:hours] using firm-fallback activity for', targetProject.id);
+    }
+    const activityId = resolved.activityId;
 
     setSubmitting(true);
     const result = await submitEntry({
@@ -289,7 +306,16 @@ export default function HoursEntryScreen() {
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
       logError('hours.submit', result.error);
-      showToast('Saved locally — will retry when BQE is reachable.', 'info');
+      if (result.httpError) {
+        // BQE actively rejected the request — surface the real reason so the
+        // user can fix the underlying issue (e.g. ProjectControlLimitation
+        // when the activity isn't in the project's group). The entry was
+        // already saved locally as a fallback, but presenting "saved, will
+        // retry" here would mislead — the retry will hit the same error.
+        showToast(result.error, 'error');
+      } else {
+        showToast('Saved locally — will retry when BQE is reachable.', 'info');
+      }
       goHome();
     }
   };
@@ -317,10 +343,22 @@ export default function HoursEntryScreen() {
     );
   }
 
+  // useHeaderHeight returns the live measured nav-bar height (accounting for
+  // status bar + safe-area insets). The previous version used no offset, so
+  // the keyboard could push the Submit button up but the nav bar would
+  // overlap the top of the scroll content. With this offset, KeyboardAvoiding
+  // accounts for both.
+  const headerHeight = useHeaderHeight();
+
+  // iOS InputAccessoryView ID. The TextInput references this id so the
+  // accessory view docks above the keyboard while the memo field is focused.
+  const memoAccessoryId = 'memo-input-accessory';
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={headerHeight}
     >
       <Stack.Screen
         options={{
@@ -428,6 +466,7 @@ export default function HoursEntryScreen() {
             style={[styles.memoInput, { borderColor: memoBorderColor }]}
             maxLength={MEMO_MAX}
             multiline
+            inputAccessoryViewID={Platform.OS === 'ios' ? memoAccessoryId : undefined}
           />
 
           {suggestions.chips.length > 0 ? (
@@ -463,6 +502,37 @@ export default function HoursEntryScreen() {
           )}
         </Pressable>
       </ScrollView>
+
+      {/*
+        iOS-only accessory bar that docks above the keyboard while the memo
+        field is focused. Gives a "Done" affordance to dismiss; the only way
+        to dismiss a multiline TextInput on iOS otherwise is a swipe down,
+        which testers consistently couldn't discover. Android renders the
+        system back/down button by default so we skip the accessory there.
+
+        Placement: RN renders InputAccessoryView via a separate native layer
+        above the keyboard regardless of JSX nesting — the binding from the
+        TextInput is purely via inputAccessoryViewID ↔ nativeID. We keep it
+        as a sibling of the ScrollView so the JSX shape reads cleanly.
+      */}
+      {Platform.OS === 'ios' ? (
+        <InputAccessoryView nativeID={memoAccessoryId}>
+          <View style={styles.accessoryBar}>
+            <Pressable
+              onPress={() => Keyboard.dismiss()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss keyboard"
+              style={({ pressed }) => [
+                styles.accessoryDone,
+                pressed && styles.accessoryDonePressed,
+              ]}
+            >
+              <Text style={styles.accessoryDoneText}>Done</Text>
+            </Pressable>
+          </View>
+        </InputAccessoryView>
+      ) : null}
     </KeyboardAvoidingView>
   );
 }
@@ -624,6 +694,31 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.background,
     textAlignVertical: 'top',
+  },
+  // Accessory bar that docks above the keyboard on iOS. Subtle surface
+  // and a top hairline so it visually separates from the keyboard's tinted
+  // background without competing for attention.
+  accessoryBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  accessoryDone: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  accessoryDonePressed: {
+    opacity: 0.6,
+  },
+  accessoryDoneText: {
+    color: colors.accent,
+    fontSize: 16,
+    fontWeight: '600',
   },
   suggestionsArea: {
     marginTop: 6,

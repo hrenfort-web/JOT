@@ -298,6 +298,29 @@ export async function markEntriesSubmissionStatus(
   );
 }
 
+/**
+ * Load every local entry for a resource within an ISO-day range. Used by
+ * the home-screen picker sort, which needs ~90 days of entries to rank
+ * projects by recency.
+ *
+ * Returns the same hydrated entries as `loadLocalWeekEntries` (just over a
+ * wider window). Order isn't guaranteed; callers should sort.
+ */
+export async function loadLocalEntriesInRange(
+  resourceId: string,
+  start: Date | string,
+  end: Date | string,
+): Promise<LocalTimeEntry[]> {
+  const startIso = toIsoDay(start);
+  const endIso = toIsoDay(end);
+  const rows = await getAll<LocalTimeEntryRow>(
+    `SELECT * FROM LocalTimeEntry
+     WHERE resourceId = ? AND date >= ? AND date <= ?`,
+    [resourceId, startIso, endIso],
+  );
+  return rows.map(entryFromRow);
+}
+
 export async function loadProjectIdsInRange(
   resourceId: string,
   start: Date | string,

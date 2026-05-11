@@ -41,9 +41,14 @@ import { runInitialSync } from '../../services/sync/initialSync';
 import {
   getEntryLockReason,
   isEntryEditable,
-  loadProjectIdsInRange,
+  loadLocalEntriesInRange,
   lockReasonMessage,
 } from '../../services/bqe/timeentry';
+import {
+  DEFAULT_RECENT_DAYS,
+  recentProjectParentIds,
+  sortProjectsForPicker,
+} from '../../utils/projectSort';
 import { useOnline } from '../../services/sync/connectivity';
 import type { LocalProject, LocalTimeEntry } from '../../db/schema';
 import type { ProjectNode } from '../../services/bqe/project';
@@ -90,7 +95,10 @@ export default function HomeScreen() {
   const [isSyncingFresh, setIsSyncingFresh] = useState(false);
   const [isSubmittingWeek, setIsSubmittingWeek] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
-  const [priorWeekParentIds, setPriorWeekParentIds] = useState<Set<string>>(new Set());
+  // 90-day entry window for the picker sort. Loaded once on bootstrap and
+  // refreshed whenever the user navigates back to the home screen so a
+  // brand-new entry shifts that project to the top of tier 1 immediately.
+  const [recentEntries, setRecentEntries] = useState<LocalTimeEntry[]>([]);
 
   const standardHours = (user?.standardHoursPerWeek as number | undefined) ?? 40;
 
@@ -163,33 +171,27 @@ export default function HomeScreen() {
     }
   }, [weekOffset, isCurrentWeek, monday, today, setSelectedDate]);
 
+  // Load the 90-day entry window that drives the picker sort. Re-runs when
+  // the user changes or the project cache size changes (which fires after
+  // every initialSync). Falls back to an empty array on error — the sort
+  // gracefully degrades to tier-2-only ordering (project number desc).
   useEffect(() => {
     if (!user?.id) return;
-    const priorMonday = addWeeks(monday, -1);
-    const priorSunday = addWeeks(sunday, -1);
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - DEFAULT_RECENT_DAYS);
     let cancelled = false;
-    loadProjectIdsInRange(user.id, priorMonday, priorSunday)
-      .then((phaseIds) => {
-        if (cancelled) return;
-        const parents = new Set<string>();
-        const lookup = useProjectStore.getState().flatProjects;
-        const phaseToParent = new Map<string, string>();
-        for (const p of lookup) {
-          if (p.isPhase && p.parentId) phaseToParent.set(p.id, p.parentId);
-        }
-        for (const phaseId of phaseIds) {
-          const parent = phaseToParent.get(phaseId);
-          if (parent) parents.add(parent);
-        }
-        setPriorWeekParentIds(parents);
+    loadLocalEntriesInRange(user.id, start, end)
+      .then((entries) => {
+        if (!cancelled) setRecentEntries(entries);
       })
       .catch(() => {
-        if (!cancelled) setPriorWeekParentIds(new Set());
+        if (!cancelled) setRecentEntries([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [user?.id, monday, sunday, flatProjects.length]);
+  }, [user?.id, flatProjects.length, weekEntries.length]);
 
   const hoursByDay = useMemo(() => buildHoursByDay(weekEntries), [weekEntries]);
   const phaseToParent = useMemo(() => buildPhaseToParent(flatProjects), [flatProjects]);
@@ -209,36 +211,49 @@ export default function HomeScreen() {
   const HEAVY_LIST_THRESHOLD = 500;
   const isHeavyList = flatProjects.length > HEAVY_LIST_THRESHOLD;
 
-  const projectBuckets = useMemo(
-    () => bucketProjects(tree, hoursByParent, priorWeekParentIds),
-    [tree, hoursByParent, priorWeekParentIds],
-  );
-  // The "Recent projects" list shows only projects the user has actually
-  // worked on this viewed week or the prior one. When both buckets are
-  // empty we render the dedicated "No recent activity" empty state instead
-  // of falling back to an alphabetical project directory — the directory was
-  // misleading (users assumed those were "their" projects), and the + FAB
-  // already gives access to the full picker.
-  const visibleProjects = useMemo(() => {
-    const { withCurrent, withPrior, others } = projectBuckets;
-    if (showAllProjects && !isHeavyList) {
-      return [...withCurrent, ...withPrior, ...others];
+  // Picker sort: tier 1 = parents the user logged time against in the last
+  // 90 days, most-recent first; tier 2 = everything else by parsed project
+  // number desc (year desc, then NNN desc). See utils/projectSort.ts.
+  //
+  // The home screen renders tier 1 unconditionally and parks tier 2 behind
+  // the "More projects" expander — same UX as the prior bucket model,
+  // different ordering inside each bucket.
+  const sortedProjectNodes = useMemo(() => {
+    if (!user?.id || tree.length === 0) return [] as ProjectNode[];
+    const sorted = sortProjectsForPicker(flatProjects, recentEntries, user.id);
+    const nodesById = new Map<string, ProjectNode>();
+    for (const node of tree) nodesById.set(node.project.id, node);
+    const out: ProjectNode[] = [];
+    for (const project of sorted) {
+      const node = nodesById.get(project.id);
+      if (node) out.push(node);
     }
-    return [...withCurrent, ...withPrior];
-  }, [projectBuckets, showAllProjects, isHeavyList]);
-  const moreProjectsCount = projectBuckets.others.length;
+    return out;
+  }, [user?.id, tree, flatProjects, recentEntries]);
+
+  const recentParentSet = useMemo(() => {
+    if (!user?.id) return new Set<string>();
+    return recentProjectParentIds(flatProjects, recentEntries, user.id);
+  }, [user?.id, flatProjects, recentEntries]);
+
+  const visibleProjects = useMemo(() => {
+    const tier1 = sortedProjectNodes.filter((n) => recentParentSet.has(n.project.id));
+    const tier2 = sortedProjectNodes.filter((n) => !recentParentSet.has(n.project.id));
+    if (showAllProjects && !isHeavyList) {
+      return [...tier1, ...tier2];
+    }
+    return tier1;
+  }, [sortedProjectNodes, recentParentSet, showAllProjects, isHeavyList]);
+  const moreProjectsCount = sortedProjectNodes.length - recentParentSet.size;
   const showMoreToggle =
     !isHeavyList &&
     moreProjectsCount > 0 &&
-    (projectBuckets.withCurrent.length > 0 || projectBuckets.withPrior.length > 0);
-  const noRecentActivity =
-    tree.length > 0 &&
-    projectBuckets.withCurrent.length === 0 &&
-    projectBuckets.withPrior.length === 0;
+    recentParentSet.size > 0;
+  const noRecentActivity = tree.length > 0 && recentParentSet.size === 0;
 
   if (__DEV__) {
     console.log(
-      `[jot:home] flatProjects=${flatProjects.length} buckets={current:${projectBuckets.withCurrent.length}, prior:${projectBuckets.withPrior.length}, others:${projectBuckets.others.length}} visible=${visibleProjects.length} heavyList=${isHeavyList}`,
+      `[jot:home] flatProjects=${flatProjects.length} recentParents=${recentParentSet.size} sorted=${sortedProjectNodes.length} visible=${visibleProjects.length} heavyList=${isHeavyList}`,
     );
   }
 
@@ -456,27 +471,12 @@ export default function HomeScreen() {
             // first N projects. The + FAB is the route to the full picker.
             // The "More projects" expander is intentionally suppressed here
             // for the same reason — pretending the user has a relevant list
-            // when they haven't logged anything is misleading. The primary
-            // CTA below the subtitle gives a more discoverable second route
-            // to the picker, alongside the FAB.
-            <View>
-              <EmptyState
-                icon="calendar-outline"
-                title="No recent activity"
-                subtitle="Tap + below to log your first entry. Projects you charge to will appear here."
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Log your first entry"
-                onPress={() => router.push('/entry/picker')}
-                style={({ pressed }) => [
-                  styles.firstEntryBtn,
-                  pressed && styles.firstEntryBtnPressed,
-                ]}
-              >
-                <Text style={styles.firstEntryBtnText}>Log your first entry</Text>
-              </Pressable>
-            </View>
+            // when they haven't logged anything is misleading.
+            <EmptyState
+              icon="calendar-outline"
+              title="No recent activity"
+              subtitle="Tap + below to log your first entry. Projects you charge to will appear here."
+            />
           ) : (
             <View style={styles.projectList}>
               {visibleProjects.map((node) => (
@@ -510,6 +510,24 @@ export default function HomeScreen() {
           )}
 
           {lastError ? <Text style={styles.error}>{lastError}</Text> : null}
+
+          {/* Persistent CTA — visible whether the user has 0 entries or a
+              full week logged. Unconditional so users always have a clear
+              path to the picker without hunting for the FAB. Uses the same
+              styling as the prior empty-state-only button. */}
+          {!isBootstrapping ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Log Your Time"
+              onPress={() => router.push('/entry/picker')}
+              style={({ pressed }) => [
+                styles.firstEntryBtn,
+                pressed && styles.firstEntryBtnPressed,
+              ]}
+            >
+              <Text style={styles.firstEntryBtnText}>Log Your Time</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {!isBootstrapping ? (
@@ -630,37 +648,6 @@ function buildPhaseLabelByParent(
     }
   }
   return labels;
-}
-
-interface ProjectBuckets {
-  withCurrent: ProjectNode[];
-  withPrior: ProjectNode[];
-  others: ProjectNode[];
-}
-
-function bucketProjects(
-  tree: ProjectNode[],
-  hoursByParent: Map<string, number>,
-  priorWeekParentIds: Set<string>,
-): ProjectBuckets {
-  const withCurrent: ProjectNode[] = [];
-  const withPrior: ProjectNode[] = [];
-  const others: ProjectNode[] = [];
-  for (const node of tree) {
-    if ((hoursByParent.get(node.project.id) ?? 0) > 0) {
-      withCurrent.push(node);
-    } else if (priorWeekParentIds.has(node.project.id)) {
-      withPrior.push(node);
-    } else {
-      others.push(node);
-    }
-  }
-  const byName = (a: ProjectNode, b: ProjectNode) =>
-    a.project.name.localeCompare(b.project.name);
-  withCurrent.sort(byName);
-  withPrior.sort(byName);
-  others.sort(byName);
-  return { withCurrent, withPrior, others };
 }
 
 function weekRangeLabel(
