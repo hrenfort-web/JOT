@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
 import { colors } from '../../theme';
 import { useReminderStore } from '../../store/useReminderStore';
@@ -30,6 +30,7 @@ import {
 import { useProjectStore } from '../../store/useProjectStore';
 import { useToastStore } from '../../store/useToastStore';
 import { getFirst } from '../../db/database';
+import { FIRM_SETTING_KEYS, readFirmSetting } from '../../services/firmSettings';
 import { PHASE_DEFAULTS } from '../../services/memos/suggestions';
 import { phaseMeta } from '../../utils/phaseMeta';
 
@@ -46,16 +47,37 @@ const HOUR_OPTIONS_PER_WEEK = [30, 35, 40, 45, 50];
 const FEEDBACK_EMAIL = 'feedback@jot.app';
 const PRIVACY_URL = 'https://jot.app/privacy';
 
+// Hadyn's BQE employee id. The Studio G stats screen is gated to this id
+// (or any dev build) so a regular staff user never sees the link. Hardcoded
+// rather than configurable because there's exactly one admin and this is a
+// pre-launch measurement tool, not a long-lived feature.
+const ADMIN_EMPLOYEE_ID = '0da01f5a-a853-485a-93f8-65a4a8f7e67a';
+
 interface CacheStats {
   projects: number;
   activities: number;
   entries: number;
 }
 
+interface DebugStats {
+  projects: number;
+  activities: number;
+  groups: number;
+  projectsWithGroup: number;
+  projectActivityGroupRows: number;
+  parentProjects: number;
+  parentProjectsWithBinding: number;
+  activitySelectionMode: string | null;
+  lastFullSync: string | null;
+  bgProgress: { done: number; total: number } | null;
+}
+
 export default function SettingsScreen() {
+  const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const demoMode = useAuthStore((s) => s.demoMode);
+  const adminVisible = __DEV__ || user?.id === ADMIN_EMPLOYEE_ID;
 
   const isLoaded = useReminderStore((s) => s.isLoaded);
   const prefs = useReminderStore((s) => s.prefs);
@@ -74,6 +96,8 @@ export default function SettingsScreen() {
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [memoExpanded, setMemoExpanded] = useState(false);
+  const [debugExpanded, setDebugExpanded] = useState(false);
+  const [debugStats, setDebugStats] = useState<DebugStats | null>(null);
 
   const loadStats = useCallback(async () => {
     const [last, projRow, actRow, entryRow] = await Promise.all([
@@ -89,6 +113,92 @@ export default function SettingsScreen() {
       entries: entryRow?.n ?? 0,
     });
   }, []);
+
+  const loadDebugStats = useCallback(async () => {
+    // Counts that diagnose the activity-group sync. The most useful signal
+    // is "parent projects with at least one binding" vs "total parent
+    // projects" — that's the percentage filled in by the background sweep.
+    // LocalProject.groupId (deprecated path) is also surfaced for parity
+    // with older builds.
+    const [
+      projRow,
+      actRow,
+      groupRow,
+      assignRow,
+      pagRow,
+      parentRow,
+      parentWithBindingRow,
+      modeRow,
+    ] = await Promise.all([
+      getFirst<{ n: number }>('SELECT COUNT(*) as n FROM LocalProject'),
+      getFirst<{ n: number }>('SELECT COUNT(*) as n FROM LocalActivity'),
+      getFirst<{ n: number }>('SELECT COUNT(*) as n FROM LocalGroup'),
+      getFirst<{ n: number }>(
+        'SELECT COUNT(*) as n FROM LocalProject WHERE groupId IS NOT NULL',
+      ),
+      getFirst<{ n: number }>('SELECT COUNT(*) as n FROM LocalProjectActivityGroup'),
+      getFirst<{ n: number }>(
+        'SELECT COUNT(*) as n FROM LocalProject WHERE isActive = 1 AND isPhase = 0',
+      ),
+      getFirst<{ n: number }>(
+        `SELECT COUNT(DISTINCT p.id) as n
+         FROM LocalProject AS p
+         INNER JOIN LocalProjectActivityGroup AS lpag ON lpag.projectId = p.id
+         WHERE p.isActive = 1 AND p.isPhase = 0`,
+      ),
+      getFirst<{ value: string | null }>(
+        `SELECT value FROM LocalFirmSettings WHERE key = 'activitySelectionMode'`,
+      ),
+    ]);
+
+    // Read async progress + last-sync separately to keep the SELECTs simple.
+    const lastFullSync = await readFirmSetting(
+      FIRM_SETTING_KEYS.ACTIVITY_GROUPS_LAST_FULL_SYNC,
+    );
+    const bgProgressRaw = await readFirmSetting(
+      FIRM_SETTING_KEYS.ACTIVITY_GROUPS_BG_PROGRESS,
+    );
+    let bgProgress: { done: number; total: number } | null = null;
+    if (bgProgressRaw) {
+      try {
+        const parsed = JSON.parse(bgProgressRaw);
+        if (
+          parsed &&
+          typeof parsed.done === 'number' &&
+          typeof parsed.total === 'number'
+        ) {
+          bgProgress = { done: parsed.done, total: parsed.total };
+        }
+      } catch {
+        // ignore — checkpoint will overwrite next time
+      }
+    }
+
+    setDebugStats({
+      projects: projRow?.n ?? 0,
+      activities: actRow?.n ?? 0,
+      groups: groupRow?.n ?? 0,
+      projectsWithGroup: assignRow?.n ?? 0,
+      projectActivityGroupRows: pagRow?.n ?? 0,
+      parentProjects: parentRow?.n ?? 0,
+      parentProjectsWithBinding: parentWithBindingRow?.n ?? 0,
+      activitySelectionMode: modeRow?.value ?? null,
+      lastFullSync,
+      bgProgress,
+    });
+  }, []);
+
+  const onToggleDebug = useCallback(() => {
+    setDebugExpanded((v) => {
+      const next = !v;
+      if (next && !debugStats) {
+        // Fire-and-forget — the section animates open immediately; stats
+        // populate when SQLite responds.
+        loadDebugStats();
+      }
+      return next;
+    });
+  }, [debugStats, loadDebugStats]);
 
   useEffect(() => {
     if (!isLoaded) loadReminders();
@@ -378,6 +488,130 @@ export default function SettingsScreen() {
           ) : null}
         </Section>
 
+        {/* Debug section — always visible during pre-launch. Hide before
+            general release by gating on `adminVisible` like the Admin
+            section, or by removing it from the JSX. The log buffer +
+            build info are pure read-only diagnostics; no production
+            data is sent anywhere. */}
+        <Section title="Debug">
+          <Row onPress={() => router.push('/debug/logs')}>
+            <View style={styles.rowBody}>
+              <Text style={styles.rowLabel}>View logs</Text>
+              <Text style={styles.rowSubtle}>
+                Last 200 console lines captured in-app
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Row>
+          <Row onPress={onToggleDebug}>
+            <View style={styles.rowBody}>
+              <Text style={styles.rowLabel}>Build info</Text>
+              <Text style={styles.rowSubtle}>
+                Version, cache counts, current resourceId
+              </Text>
+            </View>
+            <Ionicons
+              name={debugExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={colors.muted}
+            />
+          </Row>
+          {debugExpanded ? (
+            <View style={styles.debugBody}>
+              <DebugRow label="App version" value={appVersion()} />
+              <DebugRow label="Build profile" value={buildProfile()} />
+              <DebugRow label="JS bundle time" value={jsBundleTime()} />
+              <DebugRow
+                label="Resource ID"
+                value={user?.id ?? '(not signed in)'}
+                monospace
+              />
+              <DebugRow
+                label="LocalProject"
+                value={debugStats ? `${debugStats.projects}` : '…'}
+              />
+              <DebugRow
+                label="  with groupId (deprecated)"
+                value={
+                  debugStats
+                    ? `${debugStats.projectsWithGroup} / ${debugStats.projects}`
+                    : '…'
+                }
+              />
+              <DebugRow
+                label="LocalActivity"
+                value={debugStats ? `${debugStats.activities}` : '…'}
+              />
+              <DebugRow
+                label="LocalGroup"
+                value={debugStats ? `${debugStats.groups}` : '…'}
+              />
+              <DebugRow
+                label="LocalProjectActivityGroup"
+                value={debugStats ? `${debugStats.projectActivityGroupRows}` : '…'}
+              />
+              <DebugRow
+                label="  parents with binding"
+                value={
+                  debugStats
+                    ? `${debugStats.parentProjectsWithBinding} / ${debugStats.parentProjects}` +
+                      (debugStats.parentProjects > 0
+                        ? ` (${Math.round(
+                            (debugStats.parentProjectsWithBinding /
+                              debugStats.parentProjects) *
+                              100,
+                          )}%)`
+                        : '')
+                    : '…'
+                }
+              />
+              <DebugRow
+                label="Background sync"
+                value={
+                  debugStats
+                    ? debugStats.bgProgress
+                      ? `In progress: ${debugStats.bgProgress.done} / ${debugStats.bgProgress.total}`
+                      : debugStats.lastFullSync
+                        ? `Complete · ${formatRelative(new Date(debugStats.lastFullSync))}`
+                        : 'Never run'
+                    : '…'
+                }
+              />
+              <DebugRow
+                label="activitySelectionMode"
+                value={debugStats ? (debugStats.activitySelectionMode ?? '(unset)') : '…'}
+                monospace
+              />
+              <Pressable
+                onPress={loadDebugStats}
+                style={({ pressed }) => [
+                  styles.debugRefreshBtn,
+                  pressed && styles.rowPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Refresh build info"
+              >
+                <Ionicons name="refresh" size={14} color={colors.muted} />
+                <Text style={styles.debugRefreshText}>Refresh counts</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </Section>
+
+        {adminVisible ? (
+          <Section title="Admin">
+            <Row onPress={() => router.push('/admin/stats')}>
+              <View style={styles.rowBody}>
+                <Text style={styles.rowLabelAdmin}>Studio G stats (admin)</Text>
+                <Text style={styles.rowSubtle}>
+                  Firm-wide submission lag + Friday bunching baseline
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+            </Row>
+          </Section>
+        ) : null}
+
         <Section title="About">
           <Row>
             <View style={styles.rowBody}>
@@ -491,6 +725,57 @@ function appVersion(): string {
   return expoCfg?.version ?? '1.0.0';
 }
 
+// EAS-Build-injected env vars + Expo's runtime metadata. We probe several
+// names because Expo has shipped this metadata under different keys across
+// SDK versions; using a `??` chain means we don't have to keep this in sync
+// with whichever shape ships on SDK 54.
+function buildProfile(): string {
+  const env = process.env.EAS_BUILD_PROFILE;
+  if (env) return env;
+  if (__DEV__) return 'development';
+  return 'release';
+}
+
+function jsBundleTime(): string {
+  // The bundle date is approximated from EAS-Build-injected env vars when
+  // available, falling back to a runtime stamp captured the first time this
+  // function runs. Useful enough to confirm "is this the build I installed
+  // an hour ago, or the one I installed last week?".
+  const eas = process.env.EAS_BUILD_GIT_COMMIT_HASH;
+  if (eas) return `commit ${eas.slice(0, 8)}`;
+  return _runtimeBootStamp;
+}
+
+// Captured at module load so every render shows the same value. Approximate
+// (it's the JS bundle load time, not the IPA build time) but stable.
+const _runtimeBootStamp = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+function DebugRow({
+  label,
+  value,
+  monospace,
+}: {
+  label: string;
+  value: string;
+  monospace?: boolean;
+}) {
+  return (
+    <View style={styles.debugStatRow}>
+      <Text style={styles.debugStatLabel}>{label}</Text>
+      <Text
+        style={[
+          styles.debugStatValue,
+          monospace && styles.debugStatValueMono,
+        ]}
+        selectable
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 function initialsOf(name: unknown): string {
   if (typeof name !== 'string') return '?';
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -582,6 +867,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: colors.danger,
+  },
+  // Admin link — visually distinct but understated, so it never reads as
+  // a primary user-facing feature. Smaller and muted compared to rowLabel.
+  rowLabelAdmin: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
   },
   rowSubtle: {
     fontSize: 12,
@@ -778,6 +1070,54 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontStyle: 'italic',
     marginTop: 4,
+  },
+
+  // Debug section — Build info inline expansion. Visual rhythm matches the
+  // memo-defaults expansion above so the section reads as part of the
+  // grouped-list pattern, just with monospace values for the technical bits.
+  debugBody: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  debugStatRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  debugStatLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: '600',
+  },
+  debugStatValue: {
+    fontSize: 12,
+    color: colors.text,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
+  debugStatValueMono: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+  },
+  debugRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    marginTop: 6,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  debugRefreshText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: '600',
   },
 
   footer: {

@@ -39,6 +39,48 @@ export const MIGRATIONS: string[] = [
     FOREIGN KEY (scanSessionId) REFERENCES ScanSession(id)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_scancorrection_session ON ScanCorrection(scanSessionId)`,
+  // [DEPRECATED for activity-selection] Project → group via /projectassignment.
+  // Studio G doesn't populate /projectassignment, so this column stays empty
+  // for them. Kept for forward compat (some other firms may use it). The
+  // current activity-selection path goes through LocalProjectActivityGroup
+  // (sourced from /project/{id}/activities) and LocalGroup below.
+  `ALTER TABLE LocalProject ADD COLUMN groupId TEXT`,
+  `CREATE TABLE IF NOT EXISTS LocalGroup (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    activityIds TEXT NOT NULL DEFAULT '[]',
+    lastSynced TEXT NOT NULL
+  )`,
+  // Project ↔ activity-group membership. Each row binds a project to one of
+  // its assigned activity groups (the BQE `itemType: 139` records returned
+  // by GET /project/{id}/activities). Activities allowed for a project are
+  // the union of LocalGroup.activityIds across that project's groups.
+  // Replaces the LocalProject.groupId mechanism for activity selection.
+  //
+  // (Pre-launch: SCHEMA's CREATE TABLE IF NOT EXISTS covers new installs,
+  // this migration covers anyone who launched a prior dev build. Post-launch
+  // any further schema changes need proper ALTER TABLE migrations.)
+  `CREATE TABLE IF NOT EXISTS LocalProjectActivityGroup (
+    id TEXT PRIMARY KEY,
+    projectId TEXT NOT NULL,
+    groupId TEXT NOT NULL,
+    groupName TEXT,
+    itemType INTEGER,
+    lastSynced TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_lpag_project ON LocalProjectActivityGroup(projectId)`,
+  `CREATE INDEX IF NOT EXISTS idx_lpag_group ON LocalProjectActivityGroup(groupId)`,
+  // Firm-level preferences. Single-row-per-key table. Currently holds
+  // `activitySelectionMode` (auto|manual) and `activityGroupsLastFullSync`
+  // (ISO timestamp written by backgroundSync). Future settings (timezone
+  // overrides, per-firm feature flags) can land here without a schema bump.
+  `CREATE TABLE IF NOT EXISTS LocalFirmSettings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    lastUpdated TEXT NOT NULL
+  )`,
+  `INSERT OR IGNORE INTO LocalFirmSettings (key, value, lastUpdated)
+   VALUES ('activitySelectionMode', 'auto', '1970-01-01T00:00:00.000Z')`,
 ];
 
 export const SCHEMA = `
@@ -60,7 +102,11 @@ CREATE TABLE IF NOT EXISTS LocalProject (
   -- BQE returns the contract-type enum as an integer (sometimes as a numeric
   -- string; we coerce on read in projectFromRow). See ALLOWED_CONTRACT_TYPES
   -- in services/bqe/project.ts for the enum values.
-  contractType INTEGER
+  contractType INTEGER,
+  -- BQE group assignment id. Determines which activities are allowed when
+  -- POSTing a time entry against this project (see LocalGroup.activityIds).
+  -- Nullable: some projects may not have a group assigned.
+  groupId TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_project_parent ON LocalProject(parentId);
 CREATE INDEX IF NOT EXISTS idx_project_active ON LocalProject(isActive);
@@ -132,6 +178,42 @@ CREATE TABLE IF NOT EXISTS ScanCorrection (
   FOREIGN KEY (scanSessionId) REFERENCES ScanSession(id)
 );
 CREATE INDEX IF NOT EXISTS idx_scancorrection_session ON ScanCorrection(scanSessionId);
+
+-- Group activity catalog. Each LocalGroup row caches the FULL list of
+-- activity ids allowed for time entries against any project assigned to
+-- that group (not filtered to billable — the resolver filters at read
+-- time). activityIds is a JSON-encoded TEXT array; parsed in groupFromRow.
+CREATE TABLE IF NOT EXISTS LocalGroup (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  activityIds TEXT NOT NULL DEFAULT '[]',
+  lastSynced TEXT NOT NULL
+);
+
+-- Project → activity-group membership (many-to-many). Replaces the
+-- deprecated LocalProject.groupId mechanism. Populated by
+-- services/bqe/projectActivities from GET /project/{id}/activities.
+CREATE TABLE IF NOT EXISTS LocalProjectActivityGroup (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  groupId TEXT NOT NULL,
+  groupName TEXT,
+  itemType INTEGER,
+  lastSynced TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lpag_project ON LocalProjectActivityGroup(projectId);
+CREATE INDEX IF NOT EXISTS idx_lpag_group ON LocalProjectActivityGroup(groupId);
+
+-- Firm-level preferences. Key-value rows. activitySelectionMode is
+-- read by the activity resolver; activityGroupsLastFullSync is written
+-- by services/sync/backgroundSync.
+CREATE TABLE IF NOT EXISTS LocalFirmSettings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  lastUpdated TEXT NOT NULL
+);
+INSERT OR IGNORE INTO LocalFirmSettings (key, value, lastUpdated)
+  VALUES ('activitySelectionMode', 'auto', '1970-01-01T00:00:00.000Z');
 `;
 
 export interface LocalProjectRow {
@@ -150,6 +232,7 @@ export interface LocalProjectRow {
   // depending on which migration produced the column. Always normalised to
   // `number | null` by `projectFromRow` before downstream code sees it.
   contractType: number | string | null;
+  groupId: string | null;
 }
 
 export interface LocalProject {
@@ -165,6 +248,7 @@ export interface LocalProject {
   sortOrder: number;
   lastSynced: string;
   contractType: number | null;
+  groupId: string | null;
 }
 
 export interface LocalActivityRow {
@@ -261,6 +345,66 @@ export function activityFromRow(row: LocalActivityRow): LocalActivity {
     isActive: !!row.isActive,
   };
 }
+
+// --- BQE group assignment cache -------------------------------------------
+
+export interface LocalGroupRow {
+  id: string;
+  name: string | null;
+  activityIds: string; // JSON-encoded string[]
+  lastSynced: string;
+}
+
+export interface LocalGroup {
+  id: string;
+  name: string | null;
+  activityIds: string[];
+  lastSynced: string;
+}
+
+export function groupFromRow(row: LocalGroupRow): LocalGroup {
+  let activityIds: string[] = [];
+  if (row.activityIds) {
+    try {
+      const parsed = JSON.parse(row.activityIds);
+      if (Array.isArray(parsed)) {
+        activityIds = parsed.filter((v): v is string => typeof v === 'string');
+      }
+    } catch {
+      // Corrupt JSON in the cache — treat as empty list. Next sync overwrites.
+      activityIds = [];
+    }
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    activityIds,
+    lastSynced: row.lastSynced,
+  };
+}
+
+// --- Project ↔ activity-group membership ---------------------------------
+
+export interface LocalProjectActivityGroupRow {
+  id: string;
+  projectId: string;
+  groupId: string;
+  groupName: string | null;
+  itemType: number | null;
+  lastSynced: string;
+}
+
+export type LocalProjectActivityGroup = LocalProjectActivityGroupRow;
+
+// --- Firm settings -------------------------------------------------------
+
+export interface LocalFirmSettingRow {
+  key: string;
+  value: string | null;
+  lastUpdated: string;
+}
+
+export type LocalFirmSetting = LocalFirmSettingRow;
 
 export function entryFromRow(row: LocalTimeEntryRow): LocalTimeEntry {
   return {

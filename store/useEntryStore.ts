@@ -25,6 +25,7 @@ import { toIsoDay } from '../services/bqe/utils';
 import { isOnline } from '../services/sync/connectivity';
 import { processQueue } from '../services/sync/queue';
 import { rescheduleAllReminders } from '../services/notifications/reminders';
+import { extractBqeErrorMessage } from '../services/errors';
 import { useAuthStore } from './useAuthStore';
 import { run } from '../db/database';
 import type { EntrySource, LocalTimeEntry } from '../db/schema';
@@ -72,14 +73,18 @@ interface EntryState {
   ) => Promise<
     | { ok: true; queued: false; localId: number; bqeId: string }
     | { ok: true; queued: true; localId: number }
-    | { ok: false; localId: number; error: string }
+    // `httpError` distinguishes "BQE responded with a 4xx/5xx body" (true —
+    // user-actionable; show the message) from "network/timeout, no
+    // response" (false — silent queue, retry later). Either way the entry
+    // is saved locally so nothing is lost.
+    | { ok: false; localId: number; error: string; httpError: boolean }
   >;
   submitParsedBatch: (
     entries: NewEntryInput[],
   ) => Promise<
     | { ok: true; queued: false; count: number }
     | { ok: true; queued: true; count: number }
-    | { ok: false; count: number; error: string }
+    | { ok: false; count: number; error: string; httpError: boolean }
   >;
   retryEntry: (id: number) => Promise<{ ok: true } | { ok: false; error: string }>;
   saveEntryEdits: (
@@ -216,10 +221,16 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       return { ok: true as const, queued: false as const, localId, bqeId: created.id };
     } catch (e) {
       await get().refreshLocal();
+      // Distinguish "BQE rejected it" (httpError true → surface the message
+      // to the user) from "couldn't reach BQE" (httpError false → silent
+      // queue, retry on reconnect). Either way the entry is already saved
+      // locally above, so nothing is lost.
+      const bqeMsg = extractBqeErrorMessage(e);
       return {
         ok: false as const,
         localId,
-        error: e instanceof Error ? e.message : 'Failed to submit entry',
+        error: bqeMsg ?? (e instanceof Error ? e.message : 'Failed to submit entry'),
+        httpError: bqeMsg !== null,
       };
     }
   },
@@ -273,10 +284,12 @@ export const useEntryStore = create<EntryState>((set, get) => ({
     } catch (e) {
       await markEntriesFailed(localIds);
       await get().refreshLocal();
+      const bqeMsg = extractBqeErrorMessage(e);
       return {
         ok: false as const,
         count: localIds.length,
-        error: e instanceof Error ? e.message : 'Failed to submit batch',
+        error: bqeMsg ?? (e instanceof Error ? e.message : 'Failed to submit batch'),
+        httpError: bqeMsg !== null,
       };
     }
   },

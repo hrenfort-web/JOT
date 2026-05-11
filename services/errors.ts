@@ -55,6 +55,89 @@ export function logError(scope: string, e: unknown): void {
   console.error(`[jot:${scope}]`, e);
 }
 
+/**
+ * Returns a human-readable BQE error string when the failure was an HTTP
+ * response from BQE (4xx/5xx with a body), or null when it was purely a
+ * transport-level failure (offline, timeout, no response).
+ *
+ * Callers should branch on null vs non-null:
+ *   - null → don't surface anything user-hostile; the queue/local-save
+ *     fallback will retry when the network recovers.
+ *   - non-null → BQE actively rejected the request; surface the message so
+ *     the user can fix the underlying issue (most commonly an
+ *     activity/project mismatch causing ProjectControlLimitation) rather
+ *     than waiting for a retry that will never succeed.
+ *
+ * The full response body is also printed via console.error so it lands in
+ * the in-app log buffer for the Debug → View Logs screen.
+ */
+export function extractBqeErrorMessage(e: unknown): string | null {
+  const ax = e as AxiosError | undefined;
+  if (!ax || !ax.isAxiosError) return null;
+  if (!ax.response) return null; // network / timeout — caller handles silently
+
+  const status = ax.response.status;
+  const data = ax.response.data;
+
+  // Capture the full body to the log buffer. This is the diagnostic
+  // payload — keep it on a separate line so the human-friendly message
+  // can stand alone for the toast.
+  console.error(
+    `[jot:bqe-error] ${status} response =`,
+    safeStringify(data),
+  );
+
+  // Try several shapes — BQE's error envelope has shifted across endpoints.
+  // Most common today: `{ message: "...", errorCode: "031.001" }` or
+  // `{ error: { message: "..." } }` or just a plain string body.
+  const fromBody = pickBqeMessage(data);
+  if (fromBody) return `BQE error: ${fromBody}`;
+
+  return `BQE error: HTTP ${status}`;
+}
+
+function pickBqeMessage(data: unknown): string | null {
+  if (typeof data === 'string' && data.trim().length > 0) {
+    return data.slice(0, 240);
+  }
+  if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    const directMsg = pickString(obj, ['message', 'Message', 'detail', 'title']);
+    const errCode = pickString(obj, ['errorCode', 'code', 'error_code']);
+    if (directMsg && errCode) return `${errCode} ${directMsg}`;
+    if (directMsg) return directMsg;
+    const nestedErr = obj.error;
+    if (nestedErr && typeof nestedErr === 'object') {
+      const inner = pickString(nestedErr as Record<string, unknown>, [
+        'message',
+        'Message',
+        'detail',
+      ]);
+      if (inner) return inner;
+    } else if (typeof nestedErr === 'string' && nestedErr.length > 0) {
+      return nestedErr;
+    }
+  }
+  return null;
+}
+
+function pickString(obj: Record<string, unknown>, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === 'string' && v.length > 0) return v.slice(0, 240);
+  }
+  return null;
+}
+
+function safeStringify(v: unknown): string {
+  if (typeof v === 'string') return v.slice(0, 800);
+  try {
+    return JSON.stringify(v).slice(0, 800);
+  } catch {
+    return '<unserializable>';
+  }
+}
+
 function isAbortError(e: unknown): boolean {
   return !!(e instanceof Error && (e.name === 'AbortError' || e.name === 'CanceledError'));
 }

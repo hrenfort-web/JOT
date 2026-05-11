@@ -22,6 +22,13 @@ import {
   rescheduleAllReminders,
 } from '../services/notifications/reminders';
 import { useReminderStore } from '../store/useReminderStore';
+import { installLogCapture } from '../utils/logBuffer';
+
+// Install at module load (runs once when the JS bundle boots). Doing it here
+// rather than inside the RootLayout component guarantees we capture even the
+// very early console output that fires before React mounts — useful when
+// debugging a production launch crash via the in-app log viewer.
+installLogCapture();
 
 configureNotificationHandler();
 

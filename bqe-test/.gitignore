@@ -1,0 +1,12 @@
+# Real credentials and tokens — never commit.
+.env
+.token.json
+
+# Isolated node_modules for this dev harness so its deps don't pollute
+# the main Jot app's lockfile.
+node_modules/
+
+# npm / pnpm / yarn artifacts
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

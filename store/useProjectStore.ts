@@ -6,12 +6,40 @@ import {
   loadProjects,
 } from '../services/bqe/project';
 import { loadActivities } from '../services/bqe/activity';
-import type { LocalActivity, LocalProject } from '../db/schema';
+import { getAll } from '../db/database';
+import {
+  groupFromRow,
+  type LocalActivity,
+  type LocalGroup,
+  type LocalGroupRow,
+  type LocalProject,
+  type LocalProjectActivityGroup,
+  type LocalProjectActivityGroupRow,
+} from '../db/schema';
+import { loadFirmSettings } from '../services/firmSettings';
+
+async function loadGroups(): Promise<LocalGroup[]> {
+  const rows = await getAll<LocalGroupRow>('SELECT * FROM LocalGroup');
+  return rows.map(groupFromRow);
+}
+
+async function loadProjectActivityGroups(): Promise<LocalProjectActivityGroup[]> {
+  // Direct row → object copy. The TS row type already matches the column
+  // shape, so no row-mapper helper is needed (compare LocalGroup which
+  // parses a JSON string column).
+  return getAll<LocalProjectActivityGroupRow>(
+    'SELECT * FROM LocalProjectActivityGroup',
+  );
+}
 
 interface ProjectState {
   flatProjects: LocalProject[];
   tree: ProjectNode[];
   activities: LocalActivity[];
+  groups: LocalGroup[];
+  projectActivityGroups: LocalProjectActivityGroup[];
+  /** Mirror of LocalFirmSettings rows. Updated on `refresh()`. */
+  firmSettings: Record<string, string>;
   isLoading: boolean;
   lastError: string | null;
 
@@ -19,24 +47,36 @@ interface ProjectState {
   getProjectPhases: (parentId: string) => LocalProject[];
   getActiveProjects: () => ProjectNode[];
   getUserProjects: (resourceId: string) => ProjectNode[];
-  getDefaultActivityId: () => string | null;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
   flatProjects: [],
   tree: [],
   activities: [],
+  groups: [],
+  projectActivityGroups: [],
+  firmSettings: {},
   isLoading: false,
   lastError: null,
 
   refresh: async () => {
     set({ isLoading: true, lastError: null });
     try {
-      const [flat, activities] = await Promise.all([loadProjects(), loadActivities()]);
+      const [flat, activities, groups, projectActivityGroups, firmSettings] =
+        await Promise.all([
+          loadProjects(),
+          loadActivities(),
+          loadGroups(),
+          loadProjectActivityGroups(),
+          loadFirmSettings(),
+        ]);
       set({
         flatProjects: flat,
         tree: buildProjectHierarchy(flat),
         activities,
+        groups,
+        projectActivityGroups,
+        firmSettings,
         isLoading: false,
       });
     } catch (e) {
@@ -55,9 +95,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   getActiveProjects: () => get().tree.filter((n) => n.project.isActive),
 
   getUserProjects: (_resourceId) => get().tree.filter((n) => n.project.isActive),
-
-  getDefaultActivityId: () => {
-    const billable = get().activities.find((a) => a.isBillable && a.isActive);
-    return billable?.id ?? get().activities[0]?.id ?? null;
-  },
 }));
+
+// NOTE: getDefaultActivityId() was removed. Every entry-creation surface now
+// calls services/activitySelection/resolver.ts::resolveActivityForEntry()
+// directly. That function reads from this store via useProjectStore.getState()
+// to stay synchronous. See the resolver file for the v2 picker hook contract.

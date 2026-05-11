@@ -1,0 +1,19 @@
+{
+  "name": "bqe-test",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BQE Core API testing harness for diagnosing 409 ProjectControlLimitation errors. Isolated from the Jot app — runs as plain Node scripts.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "auth": "node auth.mjs",
+    "get": "node get-entries.mjs",
+    "post": "node post-entry.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "open": "^10.1.0"
+  }
+}

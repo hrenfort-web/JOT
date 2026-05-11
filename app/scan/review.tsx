@@ -37,6 +37,7 @@ import {
   validateProjectAndPhase,
 } from '../../utils/validation';
 import { formatError, logError } from '../../services/errors';
+import { resolveActivityForEntry } from '../../services/activitySelection/resolver';
 import {
   buildSessionId,
   logScanSession,
@@ -62,7 +63,6 @@ export default function ReviewScreen() {
   const parsed = useScanStore((s) => s.parsed);
   const clearAll = useScanStore((s) => s.clearAll);
   const flatProjects = useProjectStore((s) => s.flatProjects);
-  const getDefaultActivityId = useProjectStore((s) => s.getDefaultActivityId);
   const user = useAuthStore((s) => s.user);
   const submitParsedBatch = useEntryStore((s) => s.submitParsedBatch);
   const showToast = useToastStore((s) => s.show);
@@ -178,12 +178,6 @@ export default function ReviewScreen() {
       showToast('Not signed in', 'error');
       return;
     }
-    const activityId = getDefaultActivityId();
-    if (!activityId) {
-      showToast('No activity available — sync with BQE first', 'error');
-      return;
-    }
-
     const issue = entries
       .map((e) => ({ entry: e, problem: validateReviewEntry(e) }))
       .find((x) => x.problem !== null);
@@ -191,6 +185,26 @@ export default function ReviewScreen() {
       showToast(issue.problem ?? 'Please review entries', 'error');
       setEditingId(issue.entry.id);
       return;
+    }
+
+    // Resolve activityId per entry. Each scanned entry can land on a
+    // different project, and BQE rejects /timeentry POSTs whose activityId
+    // isn't in the project's group. Resolve before the batch so a single
+    // missing activity short-circuits the whole submit rather than failing
+    // mid-batch and leaving partial state.
+    const resolved: { activityId: string }[] = [];
+    for (const e of entries) {
+      const result = e.phaseProjectId
+        ? resolveActivityForEntry({ projectId: e.phaseProjectId })
+        : null;
+      if (!result || result.activityId === null) {
+        showToast(
+          'No activity available for one of these projects — please sync, or contact your admin',
+          'error',
+        );
+        return;
+      }
+      resolved.push({ activityId: result.activityId });
     }
 
     setSubmitting(true);
@@ -221,9 +235,9 @@ export default function ReviewScreen() {
     }
 
     const result = await submitParsedBatch(
-      entries.map((e) => ({
+      entries.map((e, i) => ({
         projectId: e.phaseProjectId!,
-        activityId,
+        activityId: resolved[i].activityId,
         resourceId: user.id,
         date: e.day,
         hours: e.hours,
@@ -248,7 +262,16 @@ export default function ReviewScreen() {
       }
     } else {
       logError('review.submit', result.error);
-      showToast(`Submit failed: ${formatError(new Error(result.error)).userMessage}`, 'error');
+      if (result.httpError) {
+        // BQE explicitly rejected the batch — surface the real BQE error
+        // string (e.g. ProjectControlLimitation 031.001). Don't pipe
+        // through formatError because that genericises the message into
+        // "BQE rejected this request" and hides the diagnostic detail.
+        showToast(result.error, 'error');
+      } else {
+        // Network/timeout — keep the user-friendly wrapper.
+        showToast(`Submit failed: ${formatError(new Error(result.error)).userMessage}`, 'error');
+      }
     }
   };
 

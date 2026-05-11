@@ -34,6 +34,11 @@ yarn-error.*
 .env
 .env*.local
 
+# bqe-test harness — cached OAuth tokens. .env and node_modules are
+# already covered by the broader patterns above. Unanchored so it matches
+# bqe-test/.token.json wherever it lands.
+.token.json
+
 # Claude Code session state
 .claude/
 
