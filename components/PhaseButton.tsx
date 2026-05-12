@@ -9,6 +9,11 @@ interface PhaseButtonProps {
   onPress: () => void;
 }
 
+// Theme B phase tile: cream surface, hairline border, near-black text.
+// The icon is structural here (it names the kind of phase) NOT the accent
+// moment — it renders in primary text so the code+name stay the focus.
+// On press, the whole tile briefly fills with accentMuted and the icon +
+// code shift to accent, signalling the choice while the screen transitions.
 export function PhaseButton({ code, name, icon, onPress }: PhaseButtonProps) {
   return (
     <Pressable
@@ -17,13 +22,23 @@ export function PhaseButton({ code, name, icon, onPress }: PhaseButtonProps) {
       onPress={onPress}
       style={({ pressed }) => [styles.button, pressed && styles.pressed]}
     >
-      <View style={styles.iconWrap}>
-        <Ionicons name={icon} size={28} color={colors.accent} />
-      </View>
-      <Text style={styles.code}>{code}</Text>
-      <Text style={styles.name} numberOfLines={2}>
-        {name}
-      </Text>
+      {({ pressed }) => (
+        <>
+          <Ionicons
+            name={icon}
+            size={24}
+            color={pressed ? colors.accent : colors.text}
+          />
+          <View style={styles.labels}>
+            <Text style={[styles.code, pressed && styles.codePressed]}>
+              {code}
+            </Text>
+            <Text style={styles.name} numberOfLines={2}>
+              {name}
+            </Text>
+          </View>
+        </>
+      )}
     </Pressable>
   );
 }
@@ -31,38 +46,37 @@ export function PhaseButton({ code, name, icon, onPress }: PhaseButtonProps) {
 const styles = StyleSheet.create({
   button: {
     flex: 1,
-    aspectRatio: 1,
+    minHeight: 96,
     backgroundColor: colors.surface,
-    borderRadius: 18,
-    borderWidth: 1,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    gap: 12,
+    // Icon top-left, code+name below — a calm reading order rather than
+    // the centered "destination tile" look the prior treatment had.
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
   },
   pressed: {
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.accentTint,
     borderColor: colors.accent,
   },
-  iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.accentTint,
-    alignItems: 'center',
-    justifyContent: 'center',
+  labels: {
+    gap: 4,
   },
   code: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '500',
     color: colors.text,
-    letterSpacing: -0.5,
+  },
+  codePressed: {
+    color: colors.accent,
   },
   name: {
     fontSize: 13,
-    color: colors.muted,
-    textAlign: 'center',
+    fontWeight: '400',
+    color: colors.textSecondary,
   },
 });

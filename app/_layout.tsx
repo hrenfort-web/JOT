@@ -103,6 +103,13 @@ export default function RootLayout() {
   // a prewarm. Lives in a ref so updates don't trigger re-renders.
   const wentBackgroundAtRef = useRef<number | null>(null);
 
+  // The last notification-response identifier we acted on. Expo replays
+  // pending responses when its listener is (re-)registered, so without
+  // dedupe a single tap can fire router.replace('/') more than once —
+  // dragging the user away from whatever screen they were on. See the
+  // listener below for the full filter chain.
+  const lastHandledNotifIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     console.warn('[jot:bootstrap] hot reload smoke test — ' + Date.now());
     // First line in the effect, unconditional — confirms the effect runs
@@ -200,9 +207,57 @@ export default function RootLayout() {
       await rescheduleAllReminders();
     })();
 
-    const responseSub = Notifications.addNotificationResponseReceivedListener(() => {
-      router.replace('/');
-    });
+    // Hardened notification-response listener.
+    //
+    // The previous version was a one-liner: `() => router.replace('/')`.
+    // It caused at least one in-the-wild bug where users mid-task on the
+    // hour-entry screen were yanked back to home — diagnosis was that this
+    // listener was firing for non-tap responses (dismissals/swipes) AND
+    // re-firing for replayed responses when expo-notifications re-registered
+    // the listener on effect re-runs.
+    //
+    // Three guards:
+    //   1. actionIdentifier filter — only act on actual taps. A dismissal
+    //      (user swipes the banner away) reports a different identifier and
+    //      should NOT navigate.
+    //   2. Identifier dedupe — store the last-acted-on notification id in a
+    //      ref. If Expo replays the same response, drop it.
+    //   3. Honour data.route from the notification payload — each scheduled
+    //      reminder ships `data: { route: '/' }`; we read it explicitly so
+    //      future notifications can deep-link elsewhere without revisiting
+    //      this listener. Falls back to '/' on missing/malformed values.
+    //
+    // The console.logs route through installLogCapture() and end up in the
+    // Debug → Logs viewer, so we can audit dropped events on device.
+    const responseSub = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        if (response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
+          console.log(
+            '[jot:notif] dropping non-tap response',
+            response.actionIdentifier,
+          );
+          return;
+        }
+
+        const id = response.notification.request.identifier;
+        if (lastHandledNotifIdRef.current === id) {
+          console.log('[jot:notif] dropping replayed response', id);
+          return;
+        }
+        lastHandledNotifIdRef.current = id;
+
+        const data = response.notification.request.content.data as
+          | { route?: string }
+          | undefined;
+        const route =
+          typeof data?.route === 'string' && data.route.startsWith('/')
+            ? data.route
+            : '/';
+
+        console.log('[jot:notif] handling tap, routing to', route);
+        router.replace(route);
+      },
+    );
 
     const reminderRefreshSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {

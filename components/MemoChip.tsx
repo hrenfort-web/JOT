@@ -7,6 +7,11 @@ interface MemoChipProps {
   onPress: () => void;
 }
 
+// Theme B memo chip — bumped for thumb-friendliness (H's call). 40px tall,
+// generous horizontal padding, fully pill-shaped. Default: cream surface
+// + hairline border. Tapped (selected): accent-muted fill + subtle accent
+// border + accent text. The selected state persists visually so the user
+// can see which chips contributed to the composed memo.
 export function MemoChip({ label, selected, onPress }: MemoChipProps) {
   return (
     <Pressable
@@ -26,12 +31,14 @@ export function MemoChip({ label, selected, onPress }: MemoChipProps) {
 
 const styles = StyleSheet.create({
   chip: {
-    paddingHorizontal: 14,
+    height: 40,
+    paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
+    justifyContent: 'center',
   },
   chipSelected: {
     backgroundColor: colors.accentTint,
@@ -41,12 +48,12 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   text: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '400',
     color: colors.text,
-    fontWeight: '500',
   },
   textSelected: {
     color: colors.accent,
-    fontWeight: '600',
+    fontWeight: '500',
   },
 });

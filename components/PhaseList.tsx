@@ -40,7 +40,7 @@ export function PhaseList({
           <Ionicons
             name="search-outline"
             size={18}
-            color={colors.muted}
+            color={colors.textTertiary}
             style={styles.searchIcon}
           />
           <TextInput
@@ -48,7 +48,7 @@ export function PhaseList({
             value={searchValue}
             onChangeText={onChangeSearch}
             placeholder="Search phases"
-            placeholderTextColor={colors.muted}
+            placeholderTextColor={colors.textTertiary}
             autoCorrect={false}
             autoCapitalize="characters"
             returnKeyType="search"
@@ -80,9 +80,7 @@ export function PhaseList({
                       pressed && styles.rowPressed,
                     ]}
                   >
-                    <View style={styles.iconWrap}>
-                      <Ionicons name={meta.icon} size={18} color={colors.accent} />
-                    </View>
+                    <Ionicons name={meta.icon} size={18} color={colors.text} />
                     <View style={styles.codeBadge}>
                       <Text style={styles.codeBadgeText}>{meta.code}</Text>
                     </View>
@@ -92,7 +90,7 @@ export function PhaseList({
                     <Ionicons
                       name="chevron-forward"
                       size={18}
-                      color={colors.muted}
+                      color={colors.textTertiary}
                     />
                   </Pressable>
                 );
@@ -115,11 +113,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
   searchIcon: {
@@ -134,12 +132,13 @@ const styles = StyleSheet.create({
   group: {
     gap: 8,
   },
+  // Sentence case + light letter-spacing, matching the home section
+  // header treatment. Theme B drops uppercase chrome — it shouted.
   groupHeader: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.2,
     marginTop: 4,
     marginBottom: 4,
     paddingHorizontal: 4,
@@ -150,37 +149,30 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: colors.surface,
     borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
   rowPressed: {
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.accentTint,
     borderColor: colors.accent,
   },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.accentTint,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // Code chip uses the unified accent-muted treatment from PhasePill so the
+  // grid and list views look like the same product.
   codeBadge: {
     minWidth: 36,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: colors.subtle,
+    borderRadius: 8,
+    backgroundColor: colors.accentTint,
     alignItems: 'center',
     justifyContent: 'center',
   },
   codeBadgeText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: colors.text,
-    letterSpacing: 0.5,
+    fontWeight: '500',
+    color: colors.accent,
   },
   name: {
     flex: 1,
@@ -190,7 +182,7 @@ const styles = StyleSheet.create({
   },
   empty: {
     fontSize: 14,
-    color: colors.muted,
+    color: colors.textTertiary,
     textAlign: 'center',
     paddingVertical: 32,
   },

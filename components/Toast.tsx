@@ -4,6 +4,41 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../theme';
 import { useToastStore } from '../store/useToastStore';
 
+// Theme B toast palette: tinted surfaces, NOT solid coloured fills. The
+// prior version filled the toast with accent (green→orange) and white
+// text — which read as a heavy chrome notification banner. Theme B tints
+// keep the toast feeling like a quiet status acknowledgement: the success
+// toast picks up the accent-muted background + accent text, the error
+// toast picks up the danger tint, and the info toast uses a neutral
+// cream surface with primary text.
+type TonePalette = {
+  background: string;
+  border: string;
+  text: string;
+  icon: string;
+};
+
+const TONES: Record<'success' | 'error' | 'info', TonePalette> = {
+  success: {
+    background: colors.accentTint,
+    border: colors.accent,
+    text: colors.accent,
+    icon: colors.accent,
+  },
+  error: {
+    background: colors.dangerTint,
+    border: colors.danger,
+    text: colors.danger,
+    icon: colors.danger,
+  },
+  info: {
+    background: colors.surface,
+    border: colors.border,
+    text: colors.text,
+    icon: colors.textSecondary,
+  },
+};
+
 export function Toast() {
   const message = useToastStore((s) => s.message);
   const kind = useToastStore((s) => s.kind);
@@ -47,8 +82,7 @@ export function Toast() {
 
   const icon =
     kind === 'success' ? 'checkmark-circle' : kind === 'error' ? 'alert-circle' : 'information-circle';
-  const background =
-    kind === 'success' ? colors.accent : kind === 'error' ? colors.danger : colors.text;
+  const tone = TONES[kind ?? 'info'] ?? TONES.info;
 
   return (
     <Animated.View
@@ -57,11 +91,14 @@ export function Toast() {
     >
       <Pressable
         onPress={hide}
-        style={[styles.toast, { backgroundColor: background }]}
+        style={[
+          styles.toast,
+          { backgroundColor: tone.background, borderColor: tone.border },
+        ]}
         accessibilityRole="alert"
       >
-        <Ionicons name={icon} size={20} color="#FFFFFF" />
-        <Text style={styles.text} numberOfLines={2}>
+        <Ionicons name={icon} size={20} color={tone.icon} />
+        <Text style={[styles.text, { color: tone.text }]} numberOfLines={2}>
           {message}
         </Text>
       </Pressable>
@@ -84,18 +121,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
     minWidth: '60%',
     maxWidth: '100%',
+    // Softer shadow to match Theme B's calmer surfaces. The toast is a
+    // status note, not an alert dialog — it shouldn't punch a hole in
+    // the cream page.
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 4,
   },
   text: {
-    color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     flexShrink: 1,
   },
 });

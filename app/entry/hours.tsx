@@ -18,8 +18,9 @@ import { useHeaderHeight } from '@react-navigation/elements';
 import * as Haptics from 'expo-haptics';
 
 import { colors } from '../../theme';
-import { DaySelector } from '../../components/DaySelector';
+import { WeekBar } from '../../components/WeekBar';
 import { MemoChip } from '../../components/MemoChip';
+import { PhasePill } from '../../components/PhasePill';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
@@ -103,11 +104,19 @@ export default function HoursEntryScreen() {
   }, [targetProject, flatProjects]);
 
   const phaseCode = targetProject?.isPhase ? targetProject.phaseCode : null;
-  const projectColor = parentProject?.color ?? colors.accent;
   const headerTitle = parentProject?.name ?? targetProject?.name ?? 'Log time';
 
   const [hours, setHours] = useState(0);
+  // The base button (1–8) the user tapped to seed the total. Tracked
+  // independently of `hours` so applying a modifier (+.25 etc.) doesn't
+  // visually un-select the base button — the previous "highlight === total
+  // exactly matches button value" heuristic broke the moment a modifier
+  // shifted the total. Cleared on Clear and on tapping a different base.
+  // Stays null in edit mode (we can't recover which base the user picked
+  // originally), which renders all base buttons unselected — correct.
+  const [selectedBase, setSelectedBase] = useState<number | null>(null);
   const [memo, setMemo] = useState('');
+  const [memoFocused, setMemoFocused] = useState(false);
   const [tappedChips, setTappedChips] = useState<Set<string>>(new Set());
   const [showMemoError, setShowMemoError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -179,14 +188,19 @@ export default function HoursEntryScreen() {
   const onTapBase = (n: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setHours(setHoursValue(n));
+    setSelectedBase(n);
     if (showMemoError) setShowMemoError(false);
   };
 
   const onTapModifier = (m: Modifier) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     if (m.reset) {
+      // Clear resets both — total goes to 0 and no base is selected.
       setHours(0);
+      setSelectedBase(null);
     } else if (m.delta !== undefined) {
+      // Increment/decrement: total only. selectedBase stays so the
+      // highlight persists through the modifier sequence.
       setHours((current) => adjustHours(current, m.delta!));
     }
   };
@@ -205,11 +219,20 @@ export default function HoursEntryScreen() {
   const canSubmit =
     hours > 0 && memoValid && !submitting && !!user?.id && !editingLocked;
 
-  const memoBorderColor = showMemoError && !memoValid
+  // Theme B memo border logic:
+  //   - validation failed → 1.5px danger
+  //   - currently focused → 1.5px accent
+  //   - otherwise (incl. valid+blurred) → hairline neutral
+  // Intentionally NO "accent on valid" treatment. Validity is signalled
+  // by the submit button enabling, not by colouring the input — keeps
+  // the form quiet when there's nothing wrong.
+  const memoHasError = showMemoError && !memoValid;
+  const memoBorderColor = memoHasError
     ? colors.danger
-    : memoValid
+    : memoFocused
       ? colors.accent
       : colors.border;
+  const memoBorderWidth = memoHasError || memoFocused ? 1.5 : StyleSheet.hairlineWidth;
 
   const onSubmit = async () => {
     if (!user?.id || !targetProject) return;
@@ -368,12 +391,14 @@ export default function HoursEntryScreen() {
         }}
       />
 
-      <DaySelector
-        days={visibleDays}
-        selectedDate={selectedDate}
-        today={today}
-        onSelectDay={setSelectedDate}
-      />
+      <View style={styles.daySelectorWrap}>
+        <WeekBar
+          days={visibleDays}
+          selectedDate={selectedDate}
+          today={today}
+          onSelectDay={setSelectedDate}
+        />
+      </View>
 
       <ScrollView
         style={styles.flex}
@@ -388,24 +413,26 @@ export default function HoursEntryScreen() {
           </View>
         ) : null}
 
-        <View style={styles.headerArea}>
-          <View style={[styles.phaseBadge, { backgroundColor: projectColor }]}>
-            <Text style={styles.phaseBadgeText}>{phaseCode ?? targetProject.name}</Text>
+        {phaseCode ? (
+          <View style={styles.headerArea}>
+            <PhasePill code={phaseCode} size="md" />
           </View>
-        </View>
+        ) : null}
 
         <View style={styles.hoursDisplay}>
-          <Animated.Text
-            style={[styles.hoursValue, { transform: [{ scale: hoursScale }] }]}
+          <Animated.View
+            style={[styles.hoursRow, { transform: [{ scale: hoursScale }] }]}
           >
-            {formatEntryHours(hours)}
-          </Animated.Text>
-          <Text style={styles.hoursUnit}>hours</Text>
+            <Text style={styles.hoursValue}>{formatEntryHours(hours)}</Text>
+            <Text style={styles.hoursUnit}>h</Text>
+          </Animated.View>
         </View>
 
         <View style={styles.baseGrid}>
           {BASE_HOURS.map((n) => {
-            const selected = hours === n;
+            // Highlight tracks the LAST-TAPPED base, not the current total.
+            // A modifier shifting the total to 2.25 must not un-select "2".
+            const selected = selectedBase === n;
             return (
               <Pressable
                 key={n}
@@ -445,14 +472,7 @@ export default function HoursEntryScreen() {
         <View style={styles.memoSection}>
           <View style={styles.memoLabelRow}>
             <Text style={styles.memoLabel}>What did you work on?</Text>
-            <View style={styles.requiredBadge}>
-              <Text style={styles.requiredBadgeText}>required</Text>
-            </View>
-            {memo.length > 0 ? (
-              <Text style={styles.memoCounter}>
-                {memo.length}/{MEMO_MAX}
-              </Text>
-            ) : null}
+            <Text style={styles.requiredLabel}>required</Text>
           </View>
 
           <TextInput
@@ -461,13 +481,28 @@ export default function HoursEntryScreen() {
               setMemo(t.slice(0, MEMO_MAX));
               if (showMemoError && t.trim().length >= MEMO_MIN) setShowMemoError(false);
             }}
+            onFocus={() => setMemoFocused(true)}
+            onBlur={() => setMemoFocused(false)}
             placeholder="Tap a suggestion or type…"
-            placeholderTextColor={colors.muted}
-            style={[styles.memoInput, { borderColor: memoBorderColor }]}
+            placeholderTextColor={colors.textTertiary}
+            style={[
+              styles.memoInput,
+              { borderColor: memoBorderColor, borderWidth: memoBorderWidth },
+            ]}
             maxLength={MEMO_MAX}
             multiline
             inputAccessoryViewID={Platform.OS === 'ios' ? memoAccessoryId : undefined}
           />
+
+          {memoHasError ? (
+            <Text style={styles.memoError}>
+              Add a few words about what you worked on
+            </Text>
+          ) : memo.length > 0 ? (
+            <Text style={styles.memoCounter}>
+              {memo.length}/{MEMO_MAX}
+            </Text>
+          ) : null}
 
           {suggestions.chips.length > 0 ? (
             <View style={styles.suggestionsArea}>
@@ -496,9 +531,13 @@ export default function HoursEntryScreen() {
           ]}
         >
           {submitting ? (
-            <ActivityIndicator color="#FFFFFF" />
+            <ActivityIndicator color={colors.surface} />
           ) : (
-            <Text style={styles.submitText}>{isEditing ? 'Update entry' : 'Log time'}</Text>
+            <Text
+              style={[styles.submitText, !canSubmit && styles.submitTextDisabled]}
+            >
+              {isEditing ? 'Update entry' : 'Log time'}
+            </Text>
           )}
         </Pressable>
       </ScrollView>
@@ -549,8 +588,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 48,
   },
+  daySelectorWrap: {
+    paddingVertical: 12,
+  },
+  // Lock banner — kept on the prior warmth-warning treatment (warningTint
+  // bg + the dark amber #92400E text). Same pattern the login session-
+  // expired banner uses; consistent across screens.
   lockedBanner: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningTint,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -560,50 +605,60 @@ const styles = StyleSheet.create({
   lockedBannerText: {
     color: '#92400E',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     textAlign: 'center',
   },
   headerArea: {
     alignItems: 'center',
     paddingTop: 4,
   },
-  phaseBadge: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  phaseBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
+  // The hours display is the centerpiece. 96px near-black numerals on
+  // cream — the biggest single piece of text in the app. System sans
+  // (not Architects Daughter) because clean numerals matter more than
+  // personality here. Tabular nums so 1.25 / 8.50 / 2.75 don't visually
+  // bob as the digit widths change.
   hoursDisplay: {
     alignItems: 'center',
-    paddingVertical: 28,
+    paddingVertical: 24,
+  },
+  hoursRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
   },
   hoursValue: {
-    fontSize: 80,
-    fontWeight: '700',
+    fontSize: 96,
+    fontWeight: '500',
     color: colors.text,
-    letterSpacing: -2,
+    fontVariant: ['tabular-nums'],
+    lineHeight: 100,
   },
   hoursUnit: {
-    fontSize: 14,
-    color: colors.muted,
-    marginTop: 4,
+    fontSize: 32,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    marginLeft: 6,
   },
   baseGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 12,
   },
+  // Base hour buttons (1–8) — cream surface, hairline border, primary
+  // text. Selected one flips to solid accent + cream text. The grid is
+  // 4 cols × 2 rows.
+  //
+  // Width: 22% (not 23%). Math check on a standard iPhone container
+  // (~311px wide after the screen's 16px horizontal padding):
+  //   4 × 22% = 88%, leaving 12% (~37px) for 3 × 12px gaps = 36px.
+  //   Fits with 1px slack.
+  // 23% overflowed (4×23% + 3×12 = 92% + 36px = 322px > 311px) and
+  // forced the grid to wrap into 3 cols × 3 rows on standard widths.
   baseButton: {
-    width: '23.5%',
+    width: '22%',
     aspectRatio: 1,
-    borderRadius: 16,
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
@@ -613,47 +668,63 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
   },
   baseButtonPressed: {
-    opacity: 0.75,
+    backgroundColor: colors.accentTint,
   },
   baseButtonText: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '500',
     color: colors.text,
+    fontVariant: ['tabular-nums'],
   },
   baseButtonTextSelected: {
-    color: '#FFFFFF',
+    color: colors.surface,
   },
   modifierRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 10,
+    // Tight gap to the base grid above — the 1–8 tiles and the
+    // −.25 / +.25 / +.50 / Clear row are one logical control. Keep
+    // this small so they read as a single block; the section break
+    // is the larger gap to the memo section below.
     marginTop: 16,
   },
+  // Modifier buttons (−.25 / +.25 / +.50 / Clear) — same cream tile as
+  // the base buttons but a wider pill shape. Clear stays surface-cream
+  // but takes a quieter text colour (secondary) so it doesn't read as
+  // a destructive accent button.
   modifierButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
+    height: 48,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   modifierButtonClear: {
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     borderColor: colors.border,
   },
   modifierButtonPressed: {
-    opacity: 0.75,
+    backgroundColor: colors.accentTint,
   },
   modifierText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
+  // Clear: secondary text colour (not danger) — destructive in effect
+  // but visually quieter. The orange accent stays reserved for actions
+  // the user is meant to act on, not retreat from.
   modifierTextClear: {
-    color: colors.danger,
+    color: colors.textSecondary,
   },
   memoSection: {
-    marginTop: 28,
+    // Section divider — larger gap signals "new control group" after
+    // the base+modifier pair above. Roughly 2× the base→modifier gap.
+    marginTop: 32,
     gap: 8,
   },
   memoLabelRow: {
@@ -663,41 +734,44 @@ const styles = StyleSheet.create({
   },
   memoLabel: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
-  requiredBadge: {
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  requiredBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.danger,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  // "required" indicator: accent text, NOT red. Red stays reserved for
+  // actual validation errors; accent is the visual emphasis Theme B
+  // gives to "this matters".
+  requiredLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: colors.accent,
   },
   memoCounter: {
-    marginLeft: 'auto',
+    alignSelf: 'flex-end',
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textTertiary,
+  },
+  // Inline validation message — appears below the input only when a
+  // submit attempt failed validation. Stays absent on first paint to
+  // avoid pre-emptively scolding the user.
+  memoError: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: colors.danger,
+    marginTop: 2,
   },
   memoInput: {
-    minHeight: 64,
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+    minHeight: 80,
+    borderRadius: 10,
+    paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
     color: colors.text,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
     textAlignVertical: 'top',
   },
   // Accessory bar that docks above the keyboard on iOS. Subtle surface
-  // and a top hairline so it visually separates from the keyboard's tinted
-  // background without competing for attention.
+  // and a top hairline so it visually separates from the keyboard's
+  // tinted background without competing for attention.
   accessoryBar: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -718,42 +792,49 @@ const styles = StyleSheet.create({
   accessoryDoneText: {
     color: colors.accent,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   suggestionsArea: {
-    marginTop: 6,
-    gap: 8,
+    marginTop: 12,
+    gap: 10,
   },
+  // Same treatment as the home section header — sentence case, 13/500,
+  // textSecondary, slight positive tracking. Theme B drops uppercase
+  // chrome across the board.
   suggestionsLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.2,
   },
   chipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
+  // Full-width submit pill — radius = height/2. Disabled state uses the
+  // disabledBg/disabledText tokens (matching the login button's disabled
+  // treatment) instead of fading the accent.
   submit: {
     marginTop: 32,
     backgroundColor: colors.accent,
-    borderRadius: 14,
-    paddingVertical: 16,
+    borderRadius: 28,
+    height: 56,
     alignItems: 'center',
-    minHeight: 56,
     justifyContent: 'center',
   },
   submitDisabled: {
-    backgroundColor: colors.border,
+    backgroundColor: colors.disabledBg,
   },
   submitPressed: {
-    opacity: 0.85,
+    backgroundColor: colors.accentPressed,
   },
   submitText: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '500',
+  },
+  submitTextDisabled: {
+    color: colors.disabledText,
   },
 });

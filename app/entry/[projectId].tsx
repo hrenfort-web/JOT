@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../theme';
-import { DaySelector } from '../../components/DaySelector';
+import { WeekBar } from '../../components/WeekBar';
 import { PhaseButton } from '../../components/PhaseButton';
 import { PhaseList, type PhaseGroup } from '../../components/PhaseList';
 import { EmptyState } from '../../components/EmptyState';
@@ -225,12 +225,20 @@ export default function PhaseSelectionScreen() {
         }}
       />
 
-      <DaySelector
-        days={visibleDays}
-        selectedDate={selectedDate}
-        today={today}
-        onSelectDay={setSelectedDate}
-      />
+      {/*
+        Compact WeekBar — same chrome as the home screen pills, minus
+        the per-day hours total. The entry flow doesn't surface weekly
+        totals so the pill only carries the day letter; today still
+        gets the accent border + accent letter treatment.
+      */}
+      <View style={styles.daySelectorWrap}>
+        <WeekBar
+          days={visibleDays}
+          selectedDate={selectedDate}
+          today={today}
+          onSelectDay={setSelectedDate}
+        />
+      </View>
 
       <ScrollView
         contentContainerStyle={useGrid ? styles.scroll : styles.scrollList}
@@ -276,6 +284,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  daySelectorWrap: {
+    // Vertical breathing room around the week strip. The strip itself
+    // owns its horizontal padding, so we only add vertical here.
+    paddingVertical: 12,
   },
   scroll: {
     paddingHorizontal: 16,
