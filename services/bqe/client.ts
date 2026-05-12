@@ -1,5 +1,6 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../../store/useAuthStore';
+import { isTokenExpiringWithin } from './auth';
 import { logError } from '../errors';
 
 type RetriableConfig = InternalAxiosRequestConfig & {
@@ -10,10 +11,71 @@ type RetriableConfig = InternalAxiosRequestConfig & {
 const REQUEST_TIMEOUT_MS = 15_000;
 const RETRY_5XX_DELAY_MS = 800;
 
+// Threshold for the request interceptor's proactive refresh path. If a
+// write (POST/PUT/DELETE) is about to fire and the token expires within
+// this window, refresh BEFORE the request instead of waiting for the 401
+// → refresh → retry cycle. Tighter than prewarm's 10-minute window so a
+// write that just barely missed prewarm's threshold still gets covered.
+const PROACTIVE_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
+const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
 export const bqeClient = axios.create({ timeout: REQUEST_TIMEOUT_MS });
 
-bqeClient.interceptors.request.use((config) => {
-  const { tokens, baseUrl } = useAuthStore.getState();
+let refreshInFlight: Promise<void> | null = null;
+
+/**
+ * Single-flight wrapper around useAuthStore.refreshTokens. Shared by both
+ * the request interceptor (proactive refresh before writes) and the
+ * response interceptor (reactive refresh after a 401) so the two paths
+ * can't race and double-refresh.
+ */
+async function refreshTokensOnceInFlight(): Promise<void> {
+  if (!refreshInFlight) {
+    refreshInFlight = useAuthStore
+      .getState()
+      .refreshTokens()
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  await refreshInFlight;
+}
+
+bqeClient.interceptors.request.use(async (config) => {
+  const state = useAuthStore.getState();
+  const tokens = state.tokens;
+  const baseUrl = state.baseUrl;
+
+  // Proactive refresh: for writes (POST/PUT/PATCH/DELETE), if the token
+  // is about to expire, refresh BEFORE sending. Eliminates the
+  // 401 → refresh → retry round-trip that dominates first-save latency.
+  // Demo mode tokens are 1-year-valid so they never trip the threshold.
+  const method = (config.method ?? 'get').toLowerCase();
+  if (
+    tokens?.refreshToken &&
+    WRITE_METHODS.has(method) &&
+    isTokenExpiringWithin(tokens, PROACTIVE_REFRESH_THRESHOLD_MS)
+  ) {
+    console.log(
+      `[jot:client] proactive token refresh before ${method.toUpperCase()} ${config.url ?? ''}`,
+    );
+    try {
+      await refreshTokensOnceInFlight();
+    } catch (err) {
+      // Refresh failed — fall through and let the request fire with the
+      // stale token. The response interceptor's 401 path will handle it
+      // (and log out cleanly if a second refresh attempt also fails).
+      if (__DEV__) {
+        console.log(
+          '[jot:client] proactive refresh failed, falling through to reactive path:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  }
+
+  // Re-read state after any refresh — the access token may have changed.
+  const freshTokens = useAuthStore.getState().tokens;
   if (baseUrl && !config.baseURL) {
     // Strip trailing slash so e.g. "https://api.bqecore.com/api" + "/employee"
     // doesn't become "...api//employee". Also catches stored tokens that were
@@ -23,25 +85,37 @@ bqeClient.interceptors.request.use((config) => {
   if (config.baseURL) {
     config.baseURL = config.baseURL.replace(/\/+$/, '');
   }
-  if (tokens?.accessToken && !config.headers.has('Authorization')) {
-    config.headers.set('Authorization', `Bearer ${tokens.accessToken}`);
+  if (freshTokens?.accessToken && !config.headers.has('Authorization')) {
+    config.headers.set('Authorization', `Bearer ${freshTokens.accessToken}`);
   }
   if (!config.headers.has('X-UTC-OFFSET')) {
     config.headers.set('X-UTC-OFFSET', String(-new Date().getTimezoneOffset()));
   }
+
+  // Always-on request log with time-to-expiry. Lets us correlate request
+  // timing in the Debug log buffer with how close we were to expiry —
+  // useful for "did this slow save coincide with an about-to-expire
+  // token?" diagnostics. Negative ms means already expired (the request
+  // is about to 401).
+  const expiresInMs =
+    freshTokens?.expiresAt != null ? freshTokens.expiresAt - Date.now() : null;
+  const expiresStr = expiresInMs == null ? 'no-token' : `${expiresInMs}ms`;
+  const methodUpper = (config.method ?? 'GET').toUpperCase();
+  console.log(
+    `[jot:client] ${methodUpper} ${config.url ?? ''} starting, token expires in ${expiresStr}`,
+  );
+
   if (__DEV__) {
     const fullUrl = `${config.baseURL ?? ''}${config.url ?? ''}`;
     const params = config.params
       ? ` params=${JSON.stringify(config.params)}`
       : '';
     console.log(
-      `[jot:bqe] -> ${(config.method ?? 'GET').toUpperCase()} ${fullUrl}${params}`,
+      `[jot:bqe] -> ${methodUpper} ${fullUrl}${params}`,
     );
   }
   return config;
 });
-
-let refreshInFlight: Promise<void> | null = null;
 
 bqeClient.interceptors.response.use(
   (response) => {
@@ -158,13 +232,8 @@ bqeClient.interceptors.response.use(
         await store.logout('session_expired');
         throw error;
       }
-      if (!refreshInFlight) {
-        refreshInFlight = store.refreshTokens().finally(() => {
-          refreshInFlight = null;
-        });
-      }
       try {
-        await refreshInFlight;
+        await refreshTokensOnceInFlight();
       } catch (refreshErr) {
         logError('client.refresh', refreshErr);
         await useAuthStore.getState().logout('session_expired');

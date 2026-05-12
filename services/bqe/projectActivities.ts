@@ -26,11 +26,14 @@ export interface ProjectActivityGroupBinding {
   itemType: number | null;
 }
 
-// Concurrency cap for the parallel multi-project fetch. Studio G's rate limit
-// shows as 100 requests/minute (~1.67/s); 5 concurrent with sub-second
-// responses stays well within budget. Bump up to 10 if BQE tenants prove to
-// have higher limits.
-const FETCH_CONCURRENCY = 5;
+// Concurrency cap for the multi-project fetch. Dropped from 5 → 1 because
+// the eager warm-up path (services/sync/initialSync.ts runActivityGroupPhase)
+// was firing 5 parallel /project/{id}/activities GETs alongside any
+// concurrent /timeentry traffic, which pushed past BQE's 100/min rate
+// limit during cold start. The 1500ms inter-request sleep matches
+// backgroundSync's pacing so both phases share one rate-limit budget.
+const FETCH_CONCURRENCY = 1;
+const INTER_REQUEST_DELAY_MS = 1500;
 
 let shapeLogged = false;
 
@@ -54,10 +57,20 @@ export async function fetchProjectActivityGroups(
 }
 
 /**
- * Fetch /project/{id}/activities for many projects in parallel, capped at
- * FETCH_CONCURRENCY concurrent requests. Errors on individual projects are
- * logged and skipped; the overall promise still resolves with the successful
- * results so a single bad project can't tank a whole sync phase.
+ * Fetch /project/{id}/activities for many projects with bounded concurrency
+ * and an inter-request delay matching backgroundSync's pacing. Errors on
+ * individual projects are logged and skipped; the overall promise still
+ * resolves with the successful results so a single bad project can't tank
+ * a whole sync phase.
+ *
+ * TODO(future cleanup): the rate-limit logic here (concurrency cap +
+ * inter-request sleep + per-error swallow) duplicates the pattern in
+ * services/sync/backgroundSync.ts. Both paths call into the same BQE
+ * endpoint with the same constraints; they should share a single
+ * throttled fetcher (e.g. a per-tenant token bucket exported from
+ * services/bqe/client.ts) instead of each maintaining its own pacing
+ * constants. Deferred because the consolidation touches three files and
+ * we want this commit narrow to the cold-relaunch hydration fix.
  */
 export async function fetchMultipleProjectActivityGroups(
   projectIds: string[],
@@ -84,11 +97,20 @@ export async function fetchMultipleProjectActivityGroups(
           );
         }
       }
+      // Pace requests within the worker. Skip the sleep after the LAST
+      // item so the function doesn't add an avoidable delay at the end.
+      if (cursor < projectIds.length) {
+        await sleep(INTER_REQUEST_DELAY_MS);
+      }
     }
   }
   const workers = Array.from({ length: Math.min(FETCH_CONCURRENCY, projectIds.length) }, worker);
   await Promise.all(workers);
   return out;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function saveProjectActivityGroups(

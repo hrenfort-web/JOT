@@ -16,10 +16,12 @@
 //   - Single-flight: a `running` flag in module scope prevents two parallel
 //     sweeps if initialSync somehow fires twice.
 
+import type { AxiosError } from 'axios';
 import {
-  fetchMultipleProjectActivityGroups,
+  fetchProjectActivityGroups,
   saveProjectActivityGroups,
   uniqueGroupIdsFromBindings,
+  type ProjectActivityGroupBinding,
 } from '../bqe/projectActivities';
 import { fetchAndSaveGroupDetails } from '../bqe/group';
 import { getAll } from '../../db/database';
@@ -29,10 +31,22 @@ import {
   FIRM_SETTING_KEYS,
 } from '../firmSettings';
 
-const BATCH_SIZE = 5;
-const INTER_BATCH_DELAY_MS = 100;
+// Rate-limit-aware pacing. BQE's documented per-user limit is 100 req/min.
+// With concurrency 1 + 1.5s inter-batch delay, we run at ~40 req/min worst
+// case (a few hundred ms per request + the delay). The aggressive 5-way
+// concurrency we used before was pushing ~600 req/min on a fast network —
+// well over the limit, which is why sweeps were 429-ing and starving the
+// user-facing /timeentry POSTs.
+//
+// Sweep takes longer (~10 min for 338 projects vs. ~2 min before), but it's
+// invisible background work; user-facing POST latency is what we're
+// protecting. The Retry-After respect is the safety net for cases where
+// the limit changes or another client is competing for the same window.
+const BATCH_SIZE = 1;
+const INTER_BATCH_DELAY_MS = 1500;
 const SKIP_IF_SYNCED_WITHIN_MS = 24 * 60 * 60 * 1000; // 24h
 const PROGRESS_CHECKPOINT_INTERVAL = 10; // write every 10 batches
+const DEFAULT_RETRY_AFTER_SECONDS = 60;
 
 let running = false;
 
@@ -63,20 +77,72 @@ export async function syncAllActivityGroupsInBackground(): Promise<void> {
 
     for (let i = 0; i < projectIds.length; i += BATCH_SIZE) {
       const batch = projectIds.slice(i, i + BATCH_SIZE);
+      const batchStart = Date.now();
+      // BATCH_SIZE is currently 1 so `batch` always has one project.
+      // The loop is still written generally so future tuning can bump
+      // batch size if BQE's limits relax.
+      const projectId = batch[0];
+      console.log(
+        `[jot:sync-bg] batch ${batchIndex}/${totalBatches} start (${batch.length} project${batch.length === 1 ? '' : 's'}: ${projectId.slice(0, 8)}…)`,
+      );
+
+      let bindings: ProjectActivityGroupBinding[] | null = null;
       try {
-        const bindings = await fetchMultipleProjectActivityGroups(batch);
-        await saveProjectActivityGroups(bindings);
-        for (const g of uniqueGroupIdsFromBindings(bindings)) allGroupIds.add(g);
+        bindings = await fetchProjectActivityGroups(projectId);
       } catch (e) {
-        // Per-batch swallow. Logging is intentionally verbose here — these
-        // surface in the Debug → View Logs screen, which is the only window
-        // into background work on TestFlight builds.
+        const ax = e as AxiosError | undefined;
+        const status = ax?.response?.status;
+        if (status === 429) {
+          // Rate-limit hit. The client.ts interceptor already did one
+          // Retry-After retry per request, so this is the second hit —
+          // back off at the sweep level instead of retrying immediately.
+          // Parse Retry-After ourselves (header name is case-insensitive
+          // per RFC) and pause the WHOLE sweep, not just this batch, so
+          // we don't burn the next 429 budget on the next item.
+          // Axios's response.headers is a union with optional values; cast
+          // to a plain string map here because at runtime everything is a
+          // string. parseRetryAfterSeconds tolerates missing keys.
+          const retryAfter = parseRetryAfterSeconds(
+            ax?.response?.headers as Record<string, string> | undefined,
+            DEFAULT_RETRY_AFTER_SECONDS,
+          );
+          console.warn(
+            `[jot:sync-bg] batch ${batchIndex}/${totalBatches} hit 429 — pausing sweep ${retryAfter}s before continuing`,
+          );
+          await sleep(retryAfter * 1000);
+          // Don't advance batchIndex / i — retry the same project after
+          // the pause. The single-flight `running` flag keeps this from
+          // overlapping with another sweep kickoff.
+          continue;
+        }
+        const message = e instanceof Error ? e.message : String(e);
+        const stack = e instanceof Error && e.stack ? e.stack : '(no stack)';
         console.warn(
-          `[jot:sync-bg] batch ${batchIndex}/${totalBatches} FAILED:`,
-          e instanceof Error ? e.message : e,
-          'projectIds:',
-          batch.join(','),
+          `[jot:sync-bg] batch ${batchIndex}/${totalBatches} fetch FAILED (${Date.now() - batchStart}ms): ${message}\n` +
+            `  projectId: ${projectId}\n` +
+            `  stack:\n${stack}`,
         );
+        // Continue to the next batch after the inter-batch delay — this
+        // project will be retried on a future sweep (lastSynced still
+        // stale).
+      }
+
+      if (bindings !== null) {
+        try {
+          await saveProjectActivityGroups(bindings);
+          for (const g of uniqueGroupIdsFromBindings(bindings)) allGroupIds.add(g);
+          console.log(
+            `[jot:sync-bg] batch ${batchIndex}/${totalBatches} end (success, ${Date.now() - batchStart}ms, ${bindings.length} bindings)`,
+          );
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          const stack = e instanceof Error && e.stack ? e.stack : '(no stack)';
+          console.warn(
+            `[jot:sync-bg] batch ${batchIndex}/${totalBatches} save FAILED (${Date.now() - batchStart}ms): ${message}\n` +
+              `  projectId: ${projectId}\n` +
+              `  stack:\n${stack}`,
+          );
+        }
       }
       batchIndex += 1;
 
@@ -168,6 +234,27 @@ async function collectProjectsToSync(): Promise<string[]> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Parse RFC 9110 Retry-After header. Returns seconds. Falls back to
+ * `defaultSeconds` if the header is missing, present-but-non-numeric, or
+ * a date-form value we don't understand (we don't expect BQE to use the
+ * HTTP-date variant; treat it as unparseable and back off conservatively).
+ *
+ * Headers are case-insensitive; axios normalises to lowercase but we
+ * look up both casings just in case.
+ */
+function parseRetryAfterSeconds(
+  headers: Record<string, string> | undefined,
+  defaultSeconds: number,
+): number {
+  if (!headers) return defaultSeconds;
+  const raw = headers['retry-after'] ?? headers['Retry-After'];
+  if (!raw) return defaultSeconds;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return defaultSeconds;
 }
 
 // Re-exported helpers for the Debug screen / resolver to query progress

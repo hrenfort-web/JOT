@@ -140,12 +140,25 @@ export function isEntryEditable(entry: {
 
 export async function createEntry(payload: CreateTimeEntryPayload): Promise<BqeTimeEntry> {
   if (__DEV__) logCreatePayload(payload);
-  const response = await bqeClient.post('/timeentry', toApiPayload(payload));
-  if (__DEV__) {
-    const created = response.data as { id?: string; workflow?: unknown };
-    console.log('[jot:timeentry] created → id =', created?.id);
+  // Always-on timing log so we can correlate first-save vs warm-save latency
+  // from the Debug → View Logs screen on TestFlight builds. Both success
+  // and failure paths log so we capture timeouts and 4xx/5xx durations too.
+  const start = Date.now();
+  try {
+    const response = await bqeClient.post('/timeentry', toApiPayload(payload));
+    const ms = Date.now() - start;
+    console.log(`[jot:timeentry] POST succeeded in ${ms}ms`);
+    if (__DEV__) {
+      const created = response.data as { id?: string; workflow?: unknown };
+      console.log('[jot:timeentry] created → id =', created?.id);
+    }
+    return response.data as BqeTimeEntry;
+  } catch (err) {
+    const ms = Date.now() - start;
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[jot:timeentry] POST failed after ${ms}ms: ${message}`);
+    throw err;
   }
-  return response.data as BqeTimeEntry;
 }
 
 export async function createBatchEntries(payloads: CreateTimeEntryPayload[]): Promise<unknown> {
@@ -153,8 +166,20 @@ export async function createBatchEntries(payloads: CreateTimeEntryPayload[]): Pr
     console.log(`[jot:timeentry] batch POST × ${payloads.length}`);
     for (const p of payloads) logCreatePayload(p);
   }
-  const response = await bqeClient.post('/timeentry/batch', payloads.map(toApiPayload));
-  return response.data;
+  const start = Date.now();
+  try {
+    const response = await bqeClient.post('/timeentry/batch', payloads.map(toApiPayload));
+    const ms = Date.now() - start;
+    console.log(`[jot:timeentry] batch POST × ${payloads.length} succeeded in ${ms}ms`);
+    return response.data;
+  } catch (err) {
+    const ms = Date.now() - start;
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[jot:timeentry] batch POST × ${payloads.length} failed after ${ms}ms: ${message}`,
+    );
+    throw err;
+  }
 }
 
 // Lazy-import the project store so timeentry.ts doesn't pull it at module

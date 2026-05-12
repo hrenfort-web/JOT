@@ -2,11 +2,6 @@ import * as SecureStore from 'expo-secure-store';
 import { fetchAndSaveProjects } from '../bqe/project';
 import { fetchAndSaveActivities } from '../bqe/activity';
 import { fetchAndSaveEmployees } from '../bqe/employee';
-import {
-  fetchProjectAssignments,
-  saveProjectAssignments,
-  uniqueGroupIds,
-} from '../bqe/projectAssignment';
 import { fetchAndSaveGroupDetails } from '../bqe/group';
 import {
   fetchMultipleProjectActivityGroups,
@@ -54,76 +49,39 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
 
   onProgress?.({ step: STEPS[0].label, completed, total });
 
-  await Promise.all(
-    STEPS.map(async (step) => {
-      const stepStart = Date.now();
-      try {
-        const count = await step.run();
-        if (__DEV__) {
-          console.log(
-            `[jot:sync] ${step.label}: ${count} rows in ${Date.now() - stepStart}ms`,
-          );
-        }
-      } catch (e) {
-        if (__DEV__) console.log(`[jot:sync] ${step.label} FAILED:`, e);
-        throw e;
-      } finally {
-        completed += 1;
-        onProgress?.({ step: step.label, completed, total });
+  // STEPS run sequentially to avoid SQLite "cannot start a transaction
+  // within a transaction" errors. Each step ends in an upsertMany() that
+  // opens its own withTransactionAsync; running three in parallel on the
+  // single expo-sqlite connection occasionally caught a 2nd transaction
+  // mid-flight and threw. The cost is ~1-2s extra wall-clock time vs the
+  // prior Promise.all — acceptable for a once-per-launch sync, and the
+  // bottleneck is BQE pagination not the SQLite writes.
+  for (const step of STEPS) {
+    const stepStart = Date.now();
+    try {
+      const count = await step.run();
+      if (__DEV__) {
+        console.log(
+          `[jot:sync] ${step.label}: ${count} rows in ${Date.now() - stepStart}ms`,
+        );
       }
-    }),
-  );
+    } catch (e) {
+      if (__DEV__) console.log(`[jot:sync] ${step.label} FAILED:`, e);
+      throw e;
+    } finally {
+      completed += 1;
+      onProgress?.({ step: step.label, completed, total });
+    }
+  }
 
   if (__DEV__) console.log(`[jot:sync] BQE fetches done in ${Date.now() - t0}ms`);
 
-  // Project-assignment + group-detail sync.
-  //
-  // These two endpoints answer "what activities is this project allowed to
-  // log time against?" — required to dodge the HTTP 409
-  // ProjectControlLimitation error on /timeentry POST. We run them after
-  // projects/activities/employees because:
-  //   (a) saveProjectAssignments UPDATEs LocalProject rows — the rows must
-  //       exist first.
-  //   (b) group/detail's activityIds reference rows in LocalActivity.
-  //
-  // Wrapped in try/catch deliberately: if either endpoint is unreachable,
-  // sync still succeeds with whatever it managed to fetch and the activity
-  // picker falls back to the firm-wide default (with a
-  // [jot:activity-fallback] warning per missing project). The 409 was
-  // already happening before this code existed, so a sync failure here just
-  // reverts to today's pre-fix behavior — no regression.
-  try {
-    const assignmentStart = Date.now();
-    if (__DEV__) console.log('[jot:sync] projectAssignment START');
-    const assignments = await fetchProjectAssignments();
-    await saveProjectAssignments(assignments);
-    if (__DEV__) {
-      console.log(
-        `[jot:sync] projectAssignment END: ${assignments.length} rows in ${Date.now() - assignmentStart}ms`,
-      );
-    }
-
-    const groupIds = uniqueGroupIds(assignments);
-    if (groupIds.length > 0) {
-      const groupStart = Date.now();
-      if (__DEV__) {
-        console.log(
-          `[jot:sync] group/detail START: ${groupIds.length} unique groupIds`,
-        );
-      }
-      const count = await fetchAndSaveGroupDetails(groupIds);
-      if (__DEV__) {
-        console.log(
-          `[jot:sync] group/detail END: ${count} groups in ${Date.now() - groupStart}ms`,
-        );
-      }
-    } else if (__DEV__) {
-      console.log('[jot:sync] group/detail SKIPPED: no groupIds returned');
-    }
-  } catch (e) {
-    // Non-fatal: the activity picker falls back to the firm-wide default.
-    if (__DEV__) console.log('[jot:sync] assignment/group sync FAILED:', e);
-  }
+  // Note: the legacy /projectassignment + LocalProject.groupId sync was
+  // removed. Studio G's tenant doesn't populate /projectassignment (404
+  // every call), and the path was unused for activity selection — the
+  // activity-group phase below uses /project/{id}/activities instead.
+  // See bqe-test/investigate-overhead-pins.mjs for the original
+  // discovery that confirmed the right endpoint.
 
   // Activity-group phase (the actual mechanism Studio G uses).
   //

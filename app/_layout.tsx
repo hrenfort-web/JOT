@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ActivityIndicator, AppState, StyleSheet, useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
@@ -23,6 +23,14 @@ import {
 } from '../services/notifications/reminders';
 import { useReminderStore } from '../store/useReminderStore';
 import { installLogCapture } from '../utils/logBuffer';
+import { prewarmBqeConnection } from '../services/bqe/prewarm';
+
+// Foreground-prewarm threshold. If the app was backgrounded for at least
+// this many ms before returning to active, fire a prewarm to refresh
+// network state (TLS sockets get GC'd, tokens may have expired in the
+// background). Shorter background gaps don't usually need it — the user
+// briefly switched apps and the connection is still warm.
+const FOREGROUND_PREWARM_THRESHOLD_MS = 5 * 60 * 1000;
 
 // Install at module load (runs once when the JS bundle boots). Doing it here
 // rather than inside the RootLayout component guarantees we capture even the
@@ -58,8 +66,46 @@ export default function RootLayout() {
   const loadStoredTokens = useAuthStore((s) => s.loadStoredTokens);
   const loadReminderState = useReminderStore((s) => s.load);
 
+  // Track when the app last LEFT active state (became background/inactive)
+  // so the AppState listener below can decide whether a re-entry warrants
+  // a prewarm. Lives in a ref so updates don't trigger re-renders.
+  const wentBackgroundAtRef = useRef<number | null>(null);
+
   useEffect(() => {
-    loadStoredTokens();
+    console.warn('[jot:bootstrap] hot reload smoke test — ' + Date.now());
+    // First line in the effect, unconditional — confirms the effect runs
+    // at all. If we're chasing a "prewarm never fires" bug and this line
+    // doesn't appear in the log, the bug is in React/expo-router, not in
+    // any of the code below.
+    console.log('[jot:bootstrap] useEffect fired');
+    (async () => {
+      console.log('[jot:bootstrap] entering launch IIFE');
+      try {
+        await useAuthStore.getState().loadStoredTokens();
+      } catch (e) {
+        console.warn(
+          '[jot:bootstrap] loadStoredTokens THREW (unexpected — it normally swallows internally):',
+          e instanceof Error ? e.message : e,
+        );
+        // Don't return — we still want to render the app (the
+        // protected-route effect will bounce to /auth/login). Just skip
+        // prewarm since the auth state is uncertain.
+        return;
+      }
+      const authed = useAuthStore.getState().isAuthenticated;
+      console.log(
+        `[jot:bootstrap] loadStoredTokens resolved, isAuthenticated=${authed}`,
+      );
+      if (authed) {
+        console.log('[jot:bootstrap] calling prewarmBqeConnection');
+        prewarmBqeConnection().catch(() => {
+          // prewarm swallows its own errors internally — this catch
+          // covers any synchronous throw before the first await inside.
+        });
+      } else {
+        console.log('[jot:bootstrap] skipping prewarm — not authenticated');
+      }
+    })();
   }, [loadStoredTokens]);
 
   useProtectedRoute();
@@ -87,9 +133,26 @@ export default function RootLayout() {
 
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
+        // Foreground prewarm: only if the app spent >5min in the
+        // background. Brief context-switches (e.g. user pulled down
+        // Control Center for 3 seconds) don't need it, and we'd otherwise
+        // waste a refresh + GET on every quick toggle.
+        const backgroundedAt = wentBackgroundAtRef.current;
+        if (
+          backgroundedAt !== null &&
+          Date.now() - backgroundedAt > FOREGROUND_PREWARM_THRESHOLD_MS
+        ) {
+          prewarmBqeConnection().catch(() => undefined);
+        }
+        wentBackgroundAtRef.current = null;
+
         refreshConnectivity().then((online) => {
           if (online) triggerSync();
         });
+      } else if (state === 'background' || state === 'inactive') {
+        // Snapshot when we left active. Next 'active' transition compares
+        // against this to decide whether to prewarm.
+        wentBackgroundAtRef.current = Date.now();
       }
     });
 
