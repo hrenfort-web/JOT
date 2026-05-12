@@ -13,7 +13,7 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../../theme';
+import { colors, FONT_HANDWRITING } from '../../theme';
 import {
   addWeeks,
   formatHours,
@@ -497,7 +497,7 @@ export default function HomeScreen() {
                   <Ionicons
                     name={showAllProjects ? 'chevron-up' : 'chevron-down'}
                     size={16}
-                    color={colors.muted}
+                    color={colors.textSecondary}
                   />
                   <Text style={styles.moreBtnText}>
                     {showAllProjects
@@ -518,14 +518,14 @@ export default function HomeScreen() {
           {!isBootstrapping ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Log Your Time"
+              accessibilityLabel="Log your time"
               onPress={() => router.push('/entry/picker')}
               style={({ pressed }) => [
                 styles.firstEntryBtn,
                 pressed && styles.firstEntryBtnPressed,
               ]}
             >
-              <Text style={styles.firstEntryBtnText}>Log Your Time</Text>
+              <Text style={styles.firstEntryBtnText}>Log your time</Text>
             </Pressable>
           ) : null}
         </View>
@@ -704,11 +704,15 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     gap: 8,
   },
+  // Theme B greeting: Architects Daughter at 32px. The handwritten tone
+  // greets the user — the rest of the home page is typeset prose. Negative
+  // letter-spacing that worked for system sans is dropped here; the
+  // handwriting font has its own natural spacing and tightening warps it.
   greeting: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontFamily: FONT_HANDWRITING,
+    fontSize: 32,
+    lineHeight: 36,
     color: colors.text,
-    letterSpacing: -0.5,
   },
   weekNavRow: {
     flexDirection: 'row',
@@ -718,7 +722,7 @@ const styles = StyleSheet.create({
   subGreeting: {
     flex: 1,
     fontSize: 14,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   chev: {
     width: 28,
@@ -726,7 +730,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.subtle,
+    // Cream surface tile (vs the subtle peach the prior palette used).
+    // Pairs with the rest of the page's "lifted cream" surfaces.
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle,
   },
   chevPressed: {
     opacity: 0.6,
@@ -734,19 +742,24 @@ const styles = StyleSheet.create({
   chevDisabled: {
     opacity: 0.35,
   },
+  // "Today" jump-to pill — when the user is viewing a past/future week,
+  // this offers a one-tap shortcut back. Theme B: accentTint background +
+  // accent label, NOT a solid accent fill with white text. The week-nav
+  // row is supporting chrome, not a CTA — the muted treatment keeps it
+  // from competing with the +Log time FAB.
   todayPill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.accentTint,
   },
   todayPillPressed: {
-    opacity: 0.85,
+    opacity: 0.75,
   },
   todayPillText: {
-    color: '#FFFFFF',
+    color: colors.accent,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   summary: {
     flexDirection: 'row',
@@ -759,12 +772,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 12,
   },
+  // Theme B section header: sentence case (e.g. "Recent projects"), 13px,
+  // textSecondary, weight 500. The prior uppercase + 0.6 letter-spacing
+  // treatment was chrome-noise — collapsed to a quiet caption.
   sectionHeader: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.2,
     paddingHorizontal: 4,
   },
   projectList: {
@@ -781,33 +796,37 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     borderColor: colors.border,
   },
+  // Theme B "Log Your Time" CTA. Previously a solid accent pill; now a
+  // dashed cream card. The +Log time FAB is the primary action and uses
+  // the solid-accent treatment — having two solid-accent CTAs side-by-side
+  // would split the user's eye. Dashed border signals "tap to create"
+  // without competing for visual weight.
   firstEntryBtn: {
-    // Lifts the CTA out of the muted EmptyState column with the brand
-    // green from theme.ts. Width is intentionally constrained so it reads
-    // as a focused primary action rather than a full-bleed banner.
     alignSelf: 'center',
     marginTop: 4,
     marginHorizontal: 24,
     paddingVertical: 14,
     paddingHorizontal: 28,
     borderRadius: 12,
-    backgroundColor: colors.accent,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
     minWidth: 220,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 3,
   },
   firstEntryBtnPressed: {
-    opacity: 0.85,
+    backgroundColor: colors.subtle,
   },
   firstEntryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+    // Primary text, NOT accent. The FAB directly below this card already
+    // carries the orange CTA weight — two equally-orange CTAs read as two
+    // primary actions and split the user's eye. The dashed cream border
+    // does the "this is tappable" work; the label is just the label.
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '500',
     letterSpacing: 0.2,
   },
   moreBtnPressed: {
@@ -815,8 +834,8 @@ const styles = StyleSheet.create({
   },
   moreBtnText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: colors.muted,
+    fontWeight: '500',
+    color: colors.textSecondary,
   },
   entries: {
     marginTop: 28,
@@ -831,8 +850,8 @@ const styles = StyleSheet.create({
   },
   entriesCount: {
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.muted,
+    fontWeight: '500',
+    color: colors.textTertiary,
   },
   entryList: {
     gap: 10,
@@ -848,7 +867,7 @@ const styles = StyleSheet.create({
   },
   spinnerNote: {
     fontSize: 13,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   error: {
     fontSize: 13,

@@ -5,17 +5,13 @@ import {
   LocalProjectRow,
   projectFromRow,
 } from '../../db/schema';
+import { colorForId } from '../../utils/projectColors';
 
-const PROJECT_COLORS = [
-  '#2E8B6A',
-  '#3B82F6',
-  '#F59E0B',
-  '#EF4444',
-  '#8B5CF6',
-  '#EC4899',
-  '#06B6D4',
-  '#84CC16',
-];
+// Project-card dot palette + resolver have moved to utils/projectColors.
+// The read path (projectFromRow) is now the source of truth — see that
+// file's header for the rationale. saveProjects still calls colorForId
+// below ONLY to keep the legacy LocalProject.color column populated for
+// back-compat; the column is otherwise ignored at hydrate time.
 
 const PHASE_NAME_REGEX = /[-–—:]\s*([A-Z]{1,4})\s*$/;
 const PHASE_CODE_REGEX = /[-_/]([A-Z]{1,4})$/;
@@ -129,14 +125,6 @@ function logProjectDiagnostics(projects: BqeProject[], source: string): void {
   );
 }
 
-function colorForId(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) | 0;
-  }
-  return PROJECT_COLORS[Math.abs(hash) % PROJECT_COLORS.length];
-}
-
 function extractPhaseCode(name: string | undefined, code: string | undefined): string | null {
   if (name) {
     const m = name.match(PHASE_NAME_REGEX);
@@ -198,6 +186,10 @@ export async function saveProjects(projects: BqeProject[]): Promise<void> {
       sqliteBool(isPhase),
       isPhase ? extractPhaseCode(name, p.code) : null,
       sqliteBool(active),
+      // Legacy: color is derived at read-time in projectFromRow. This write
+      // is kept only so the column isn't NULL for back-compat with any read
+      // path that might still SELECT it directly. Safe to drop in a future
+      // cleanup if we're confident nothing reads it raw.
       isPhase ? null : colorForId(p.id),
       isPhase ? 0 : (sortIndex.get(p.id) ?? 0),
       now,

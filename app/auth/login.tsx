@@ -15,7 +15,7 @@ import {
 } from '../../services/bqe/auth';
 import { fetchCurrentEmployee } from '../../services/bqe/employee';
 import { useAuthStore } from '../../store/useAuthStore';
-import { colors } from '../../theme';
+import { colors, FONT_HANDWRITING } from '../../theme';
 import { formatError, logError } from '../../services/errors';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -124,11 +124,17 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.brand}>
-        <Text style={styles.title}>jot</Text>
-        <Text style={styles.tagline}>
-          <Text style={styles.taglineSecondary}>jot it.</Text>
-          <Text style={styles.taglinePrimary}> done.</Text>
+        {/*
+          Theme B wordmark — "Jot it." in Architects Daughter, with only
+          the period coloured accent. The period is the entire brand
+          punch: small, deliberate, the visual equivalent of "done".
+          The 24px gap below puts breathing room before the prose
+          tagline. Don't add a third tone — it dilutes the accent.
+        */}
+        <Text style={styles.wordmark}>
+          Jot it<Text style={styles.wordmarkPeriod}>.</Text>
         </Text>
+        <Text style={styles.tagline}>Done.</Text>
       </View>
 
       {sessionExpired ? (
@@ -152,7 +158,7 @@ export default function LoginScreen() {
           ]}
         >
           {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
+            <ActivityIndicator color={colors.surface} />
           ) : (
             <Text style={styles.buttonText}>Connect to BQE Core</Text>
           )}
@@ -191,6 +197,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
     paddingHorizontal: 32,
+    // Wordmark sits in the upper-middle third; button anchors near the
+    // bottom. space-between distributes naturally given the paddings.
     justifyContent: 'space-between',
     paddingTop: 96,
     paddingBottom: 64,
@@ -198,70 +206,77 @@ const styles = StyleSheet.create({
   brand: {
     alignItems: 'center',
   },
-  title: {
-    fontSize: 56,
-    fontWeight: '700',
+  wordmark: {
+    fontFamily: FONT_HANDWRITING,
+    // 72px is large enough that the handwriting reads as character, not
+    // decoration. Negative letter-spacing tightened the prior Helvetica
+    // wordmark; for the handwriting font the natural spacing is correct
+    // — no kerning adjustment.
+    fontSize: 72,
     color: colors.text,
-    letterSpacing: -2,
+    lineHeight: 80,
+    textAlign: 'center',
+  },
+  wordmarkPeriod: {
+    fontFamily: FONT_HANDWRITING,
+    fontSize: 72,
+    color: colors.accent,
   },
   tagline: {
-    marginTop: 8,
+    // System sans-serif (no fontFamily → platform default). The
+    // counterpoint to the wordmark — typeset prose against the
+    // handwritten brand mark.
+    marginTop: 24,
     fontSize: 16,
-    fontWeight: '600',
-  },
-  taglineSecondary: {
-    color: colors.secondary,
-    fontWeight: '600',
-  },
-  taglinePrimary: {
-    color: colors.accent,
-    fontWeight: '600',
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.3,
+    textAlign: 'center',
   },
   actions: {
     gap: 16,
   },
   button: {
     backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingVertical: 16,
+    // Pill — radius = height/2.
+    borderRadius: 28,
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 56,
   },
   buttonPressed: {
-    opacity: 0.85,
+    backgroundColor: colors.accentPressed,
   },
   buttonDisabled: {
-    opacity: 0.5,
+    backgroundColor: colors.disabledBg,
   },
   buttonText: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   demoButton: {
     backgroundColor: colors.surface,
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 24,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 48,
     borderWidth: 1,
     borderColor: colors.accent,
   },
   demoButtonText: {
     color: colors.accent,
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   demoHint: {
-    fontSize: 12,
-    color: colors.muted,
+    fontSize: 13,
+    color: colors.textTertiary,
     textAlign: 'center',
     marginTop: -8,
   },
   error: {
-    color: '#B91C1C',
+    color: colors.danger,
     textAlign: 'center',
     fontSize: 14,
   },
@@ -269,7 +284,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningTint,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
@@ -277,7 +292,7 @@ const styles = StyleSheet.create({
   bannerText: {
     flex: 1,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#92400E',
   },
 });

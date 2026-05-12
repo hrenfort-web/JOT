@@ -42,20 +42,24 @@ export function ProjectCard({ name, phaseLabel, hours, color, onPress }: Project
         <Text style={[styles.hours, hours === 0 && styles.hoursZero]}>
           {hours === 0 ? '—' : `${formatHours(hours)}h`}
         </Text>
-        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+        <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
       </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  // Theme B project card: cream surface + barely-visible hairline border
+  // (rgba 8% black). The colour dot and project name carry identity; the
+  // chrome stays out of the way so the list reads as a calm column rather
+  // than a stack of competing cards.
   card: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle,
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 12,
@@ -73,7 +77,7 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   right: {
@@ -83,12 +87,14 @@ const styles = StyleSheet.create({
   },
   hours: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
     minWidth: 36,
     textAlign: 'right',
   },
   hoursZero: {
-    color: colors.muted,
+    // Empty state stays neutral grey, never red/pink. No hours yet is
+    // not a problem — it's just data that hasn't been entered.
+    color: colors.textTertiary,
   },
 });

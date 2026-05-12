@@ -11,11 +11,11 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#111111",
+      "backgroundColor": "#FAF6EE",
       "dark": {
         "image": "./assets/splash-icon.png",
         "resizeMode": "contain",
-        "backgroundColor": "#111111"
+        "backgroundColor": "#FAF6EE"
       }
     },
     "ios": {
@@ -30,7 +30,7 @@
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#111111"
+        "backgroundColor": "#FAF6EE"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -62,9 +62,10 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#2E8B6A"
+          "color": "#C75D2C"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "extra": {
       "router": {},

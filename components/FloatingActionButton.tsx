@@ -13,6 +13,11 @@ interface FloatingActionButtonProps {
  * Extended (pill-shaped) FAB. Material-style: rounded rectangle, leading
  * icon, trailing text label. Sits at bottom-right with a soft drop shadow.
  * Renders as a single Pressable so the whole pill is one tap target.
+ *
+ * Theme B: accent background, cream surface foreground (NOT pure white —
+ * cream picks up the page tone so the FAB looks like part of the paper,
+ * not a sticker on top of it). Pressed state swaps to accentPressed
+ * (#A04D24) instead of opacity, matching the login button.
  */
 export function FloatingActionButton({
   icon,
@@ -27,7 +32,7 @@ export function FloatingActionButton({
       onPress={onPress}
       style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
     >
-      <Ionicons name={icon} size={22} color="#FFFFFF" />
+      <Ionicons name={icon} size={22} color={colors.surface} />
       <Text style={styles.label}>{label}</Text>
     </Pressable>
   );
@@ -45,19 +50,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 26,
     backgroundColor: colors.accent,
+    // Shadow tuned for the warm cream page — a pure black shadow at 22%
+    // reads cold on cream. Drop opacity slightly and let the shadow carry
+    // the elevation without staining the page.
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
+    shadowOpacity: 0.18,
     shadowRadius: 10,
     elevation: 6,
   },
   fabPressed: {
-    opacity: 0.85,
+    backgroundColor: colors.accentPressed,
   },
   label: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
     letterSpacing: 0.2,
   },
 });

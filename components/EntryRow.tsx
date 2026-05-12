@@ -162,13 +162,13 @@ export function EntryRow({
         <View style={styles.right}>
           <Text style={styles.hours}>{formatHours(hours)}h</Text>
           {locked ? (
-            <Ionicons name="lock-closed" size={16} color={colors.muted} />
+            <Ionicons name="lock-closed" size={16} color={colors.textTertiary} />
           ) : failed ? (
             <Ionicons name="alert-circle" size={18} color={colors.danger} />
           ) : pending ? (
             <Ionicons name="cloud-upload-outline" size={16} color="#B45309" />
           ) : (
-            <Ionicons name="pencil-outline" size={16} color={colors.muted} />
+            <Ionicons name="pencil-outline" size={16} color={colors.textTertiary} />
           )}
         </View>
       </Pressable>
@@ -177,14 +177,17 @@ export function EntryRow({
 }
 
 const styles = StyleSheet.create({
+  // Theme B entry row: same hairline-cream-card treatment as ProjectCard.
+  // The data inside (project name, memo, hours) carries the visual weight;
+  // chrome stays out of the way so a day's entries read as a calm list.
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 14,
-    borderWidth: 1,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 12,
   },
@@ -197,17 +200,20 @@ const styles = StyleSheet.create({
   },
   rowFailed: {
     borderColor: colors.danger,
+    // Hairline doesn't read on the failed state — bump to 1px so the
+    // danger border is felt.
+    borderWidth: 1,
   },
   failedHint: {
     fontSize: 11,
     color: colors.danger,
-    fontWeight: '600',
+    fontWeight: '500',
     marginTop: 2,
   },
   pendingHint: {
     fontSize: 11,
     color: '#B45309',
-    fontWeight: '600',
+    fontWeight: '500',
     marginTop: 2,
   },
   dot: {
@@ -224,37 +230,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  // Project name: 14px weight 400 primary text. Earlier weight 600 read
+  // too heavily on a list of entries — the data is already strong, the
+  // type doesn't need to shout.
   name: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '400',
     color: colors.text,
     flexShrink: 1,
   },
-  phase: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.muted,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-    backgroundColor: colors.subtle,
-  },
   memo: {
-    fontSize: 13,
-    color: colors.muted,
+    fontSize: 14,
+    fontWeight: '400',
+    color: colors.text,
   },
   memoEmpty: {
     fontStyle: 'italic',
+    color: colors.textTertiary,
   },
   right: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  // Hours value: same size as the name, half a weight heavier — reads
+  // as the focal number without dominating.
   hours: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '500',
     color: colors.text,
+    textAlign: 'right',
   },
   deleteWrap: {
     width: 96,
@@ -266,7 +271,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.danger,
     width: 90,
     height: '100%',
-    borderRadius: 14,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
@@ -275,8 +280,8 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   deleteText: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '500',
   },
 });

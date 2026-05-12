@@ -11,11 +11,15 @@ interface WeekBarProps {
   onSelectDay: (iso: string) => void;
 }
 
-const GREEN_BG = '#D1FAE5';
-const GREEN_TEXT = '#065F46';
-const RED_BG = '#FEE2E2';
-const RED_TEXT = '#991B1B';
-
+// Theme B: the week pills are now neutral. No green for "met target", no red
+// for "under target" — empty is just empty, and the data is allowed to be the
+// celebration on its own. The only chrome accent is today's-day, which gets
+// an orange BORDER (not fill) so the hours number stays readable. See
+// theme.ts for the full Theme B rationale.
+//
+// The `targetHours` prop is intentionally retained even though it no longer
+// drives pill color — it still informs the accessibility label so VO users
+// hear "target met" / "under target" without the visual cue.
 export function WeekBar({
   days,
   hoursByDay,
@@ -34,36 +38,35 @@ export function WeekBar({
         const cmp = compareDay(d, today);
         const isFuture = cmp > 0;
         const metTarget = hours >= targetHours;
+        const hasHours = hours > 0;
 
-        let bg: string = colors.background;
-        let textColor: string = colors.text;
-        let labelColor: string = colors.muted;
-        let hoursColor: string = colors.text;
-
-        if (!isFuture) {
-          if (metTarget) {
-            bg = GREEN_BG;
-            textColor = GREEN_TEXT;
-            labelColor = GREEN_TEXT;
-            hoursColor = GREEN_TEXT;
-          } else {
-            bg = RED_BG;
-            textColor = RED_TEXT;
-            labelColor = RED_TEXT;
-            hoursColor = RED_TEXT;
-          }
-        }
-
+        // Today: 1.5px accent border + accent day letter. Selected (but
+        // not today): subtle 1.5px dark border so the user can still see
+        // which day they tapped. Default: cream hairline border. No fill
+        // changes — every pill keeps the cream surface so the hours
+        // number stays the point.
         const borderColor = isToday
           ? colors.accent
           : isSelected
             ? colors.text
             : colors.border;
-        const borderWidth = isToday || isSelected ? 2 : 1;
+        const borderWidth = isToday || isSelected ? 1.5 : 1;
+
+        // Day letter colour:
+        //   today → accent (the only chromatic emphasis)
+        //   otherwise → textSecondary (#5C5C5A)
+        const dayLabelColor = isToday ? colors.accent : colors.textSecondary;
+
+        // Hours value colour:
+        //   logged hours → text primary (#1A1A1A), even on today
+        //   empty (past/today/future) → disabled grey for the em-dash
+        const hoursColor = hasHours ? colors.text : colors.disabledText;
 
         // Compose a single screen-reader sentence covering everything the
         // visual pill conveys: day, hours, target attainment, and "today"
-        // marker. VO users otherwise lose the green/red contextual meaning.
+        // marker. VO users otherwise lose the contextual meaning that the
+        // visual treatment used to carry (green/red is gone, but the
+        // semantics live on in the label).
         const fullName = d.toLocaleDateString(undefined, { weekday: 'long' });
         const hoursPhrase =
           hours === 0
@@ -86,26 +89,14 @@ export function WeekBar({
             accessibilityState={{ selected: isSelected }}
             style={({ pressed }) => [
               styles.pill,
-              { backgroundColor: bg, borderColor, borderWidth },
+              { borderColor, borderWidth },
               pressed && styles.pillPressed,
             ]}
           >
-            <Text
-              style={[
-                styles.dayLabel,
-                { color: labelColor },
-                isToday && styles.dayLabelToday,
-              ]}
-            >
+            <Text style={[styles.dayLabel, { color: dayLabelColor }]}>
               {shortDayLabel(d)}
             </Text>
-            <Text
-              style={[
-                styles.hoursLabel,
-                { color: hoursColor },
-                hours === 0 && isFuture && styles.zeroFuture,
-              ]}
-            >
+            <Text style={[styles.hoursLabel, { color: hoursColor }]}>
               {hours === 0 ? '—' : formatHours(hours)}
             </Text>
           </Pressable>
@@ -125,26 +116,22 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 14,
-    gap: 4,
+    paddingVertical: 12,
+    borderRadius: 12,
+    // Surface — cream, lifted off the page background, regardless of
+    // logged/empty/today. Today is denoted only by the border.
+    backgroundColor: colors.surface,
+    gap: 6,
   },
   pillPressed: {
-    opacity: 0.75,
+    opacity: 0.7,
   },
   dayLabel: {
     fontSize: 12,
-    fontWeight: '600',
-  },
-  dayLabelToday: {
-    fontWeight: '700',
+    fontWeight: '500',
   },
   hoursLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  zeroFuture: {
-    color: colors.muted,
+    fontSize: 18,
     fontWeight: '500',
   },
 });

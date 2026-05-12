@@ -1,3 +1,5 @@
+import { colorForId } from '../utils/projectColors';
+
 export const MIGRATIONS: string[] = [
   `ALTER TABLE LocalTimeEntry ADD COLUMN billStatus TEXT`,
   `ALTER TABLE LocalTimeEntry ADD COLUMN version TEXT`,
@@ -330,11 +332,20 @@ export function projectFromRow(row: LocalProjectRow): LocalProject {
     const n = Number(row.contractType);
     contractType = Number.isFinite(n) ? n : null;
   }
+  // Resolve the project dot colour at read time, NOT from the row.color
+  // column. The column persists for back-compat but its value is stale on
+  // any install that synced under the prior palette. utils/projectColors
+  // owns the single source of truth — see that file for the full rationale.
+  // Phases stay null (matches the prior behaviour where saveProjects wrote
+  // null for isPhase rows; the parent project carries the identity dot).
+  const isPhase = !!row.isPhase;
+  const color = isPhase ? null : colorForId(row.id);
   return {
     ...row,
-    isPhase: !!row.isPhase,
+    isPhase,
     isActive: !!row.isActive,
     contractType,
+    color,
   };
 }
 

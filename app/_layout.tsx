@@ -3,6 +3,11 @@ import { ActivityIndicator, AppState, StyleSheet, useColorScheme, View } from 'r
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import {
+  ArchitectsDaughter_400Regular,
+  useFonts,
+} from '@expo-google-fonts/architects-daughter';
+import * as SplashScreen from 'expo-splash-screen';
 import { colors } from '../theme';
 import { useAuthStore } from '../store/useAuthStore';
 import { Toast } from '../components/Toast';
@@ -24,6 +29,15 @@ import {
 import { useReminderStore } from '../store/useReminderStore';
 import { installLogCapture } from '../utils/logBuffer';
 import { prewarmBqeConnection } from '../services/bqe/prewarm';
+
+// Keep the native splash up until the JS side signals it's ready (font
+// loaded + auth state hydrated). Called at module load — must run before
+// the first render. We call it inside a try/catch because Expo's docs
+// note repeat calls can throw on some platforms.
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // No-op: the splash will hide on its default timer if this fails.
+  // We'd rather degrade to a flash of the wrong colour than crash.
+});
 
 // Foreground-prewarm threshold. If the app was backgrounded for at least
 // this many ms before returning to active, fire a prewarm to refresh
@@ -65,6 +79,24 @@ export default function RootLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const loadStoredTokens = useAuthStore((s) => s.loadStoredTokens);
   const loadReminderState = useReminderStore((s) => s.load);
+
+  // Architects Daughter for the "Jot it." wordmark + the home greeting.
+  // Render gate: nothing in the tree can render until this resolves.
+  // Otherwise the first paint shows the wordmark in a system font then
+  // reflows when the font arrives — visible flicker on cold launch.
+  const [fontsLoaded, fontError] = useFonts({
+    ArchitectsDaughter_400Regular,
+  });
+
+  // Hide the native splash once the font is loaded (or has explicitly
+  // failed — better to show the app in a fallback than hang). useAuthStore
+  // isReady is handled by the existing splash-loading View further down,
+  // so we don't need to wait for it here.
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync().catch(() => undefined);
+    }
+  }, [fontsLoaded, fontError]);
 
   // Track when the app last LEFT active state (became background/inactive)
   // so the AppState listener below can decide whether a re-entry warrants
@@ -190,11 +222,17 @@ export default function RootLayout() {
     };
   }, [isAuthenticated, loadReminderState, router]);
 
+  // Combined readiness: both fonts AND auth state must be hydrated before
+  // we let the route tree mount. If fonts fail to load (fontError set),
+  // we still proceed — a fallback system font is preferable to a hung
+  // splash screen.
+  const ready = isReady && (fontsLoaded || !!fontError);
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <ErrorBoundary>
-      {!isReady ? (
+      {!ready ? (
         <View style={styles.splash}>
           <ActivityIndicator color={colors.accent} />
         </View>

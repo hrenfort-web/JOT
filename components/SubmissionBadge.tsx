@@ -6,6 +6,12 @@ interface SubmissionBadgeProps {
   status: string | null;
 }
 
+// Theme B submission badge. Sentence case (Draft / Submitted / Rejected),
+// 10px / weight 500 / no caps — chrome that names the state, not chrome
+// that shouts it. The label gets a soft tinted background that names the
+// affect (neutral cream for Draft, accent tint for Submitted, warm red
+// tint for Rejected). Approved is reduced to a single checkmark — once
+// the entry is settled there's nothing more to say.
 export function SubmissionBadge({ status }: SubmissionBadgeProps) {
   const normalized = (status ?? 'draft').toLowerCase();
 
@@ -42,23 +48,23 @@ export function SubmissionBadge({ status }: SubmissionBadgeProps) {
 
 const styles = StyleSheet.create({
   pill: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   text: {
     fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    fontWeight: '500',
   },
+  // Draft: disabledBg cream-gray + textSecondary label. No border any more
+  // — the tinted background carries the chip on its own, and the prior
+  // hairline border read as visual noise next to the entry's hairline
+  // card border.
   pillDraft: {
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.disabledBg,
   },
   textDraft: {
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   pillSubmitted: {
     backgroundColor: colors.accentTint,
@@ -67,7 +73,7 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
   pillRejected: {
-    backgroundColor: '#FCE7E7',
+    backgroundColor: colors.dangerTint,
   },
   textRejected: {
     color: colors.danger,
