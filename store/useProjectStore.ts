@@ -16,7 +16,7 @@ import {
   type LocalProjectActivityGroup,
   type LocalProjectActivityGroupRow,
 } from '../db/schema';
-import { loadFirmSettings } from '../services/firmSettings';
+import { loadFirmSettings, seedFirmSettingsIfStale } from '../services/firmSettings';
 
 async function loadGroups(): Promise<LocalGroup[]> {
   const rows = await getAll<LocalGroupRow>('SELECT * FROM LocalGroup');
@@ -62,6 +62,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   refresh: async () => {
     set({ isLoading: true, lastError: null });
     try {
+      // Ensure the versioned firm-settings seed is current before the
+      // in-memory mirror is hydrated. Cheap when up-to-date (one SELECT);
+      // writes the payload only when the stored version is behind. Wrapped
+      // in try/catch so a transient DB hiccup never blocks the rest of
+      // refresh — the resolver falls back to first-billable-in-group.
+      try {
+        await seedFirmSettingsIfStale();
+      } catch (e) {
+        if (__DEV__) {
+          console.log(
+            '[jot:store] firm-settings seed FAILED (non-fatal):',
+            e instanceof Error ? e.message : e,
+          );
+        }
+      }
       const [flat, activities, groups, projectActivityGroups, firmSettings] =
         await Promise.all([
           loadProjects(),
