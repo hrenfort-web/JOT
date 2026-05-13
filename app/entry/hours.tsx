@@ -21,6 +21,7 @@ import { colors } from '../../theme';
 import { WeekBar } from '../../components/WeekBar';
 import { MemoChip } from '../../components/MemoChip';
 import { PhasePill } from '../../components/PhasePill';
+import { HeaderHomeButton } from '../../components/HeaderHomeButton';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
@@ -30,7 +31,14 @@ import {
   formatEntryHours,
   setHoursValue,
 } from '../../utils/hourMath';
-import { getMonday, getWeekDays } from '../../utils/dateHelpers';
+import { getMonday, getSunday, getWeekDays, toIsoDay } from '../../utils/dateHelpers';
+import {
+  REPEAT_THRESHOLD,
+  REPEAT_TIMEOUT_MS,
+  getRepeatMemoCounts,
+  isMemoRepeated,
+  normalizeMemo,
+} from '../../utils/repeatMemoNudge';
 import {
   MemoSuggestions,
   getMemoSuggestions,
@@ -74,9 +82,26 @@ export default function HoursEntryScreen() {
     projectId?: string;
     entryId?: string;
   }>();
+  // useHeaderHeight returns the live measured nav-bar height (accounting
+  // for status bar + safe-area insets). Consumed by KeyboardAvoidingView
+  // below as the vertical offset so the keyboard pushes the submit button
+  // up cleanly without the nav bar overlapping the top of the scroll.
+  //
+  // MUST be called above every early return in this component — the hook
+  // calls useContext internally, and conditionally skipping it (by hitting
+  // the loading-state early-return) makes React's hook-order check fire:
+  //   "React has detected a change in the order of Hooks called by
+  //    HoursEntryScreen."
+  // The edit-mode path hit exactly this: loadingEntry starts true in edit
+  // mode, the early return runs, then once loadedEntry resolves the next
+  // render falls through to the main body and useHeaderHeight gets called
+  // for the first time. Two consecutive renders with different hook
+  // counts. Keeping the call up here keeps the count stable.
+  const headerHeight = useHeaderHeight();
 
   const today = useMemo(() => new Date(), []);
   const monday = useMemo(() => getMonday(today), [today]);
+  const sunday = useMemo(() => getSunday(today), [today]);
   const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
 
   const user = useAuthStore((s) => s.user);
@@ -122,6 +147,18 @@ export default function HoursEntryScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [loadingEntry, setLoadingEntry] = useState(isEditing);
 
+  // Repeat-memo nudge state — see utils/repeatMemoNudge.ts for the full
+  // mechanism. Counts are keyed by normalised (lowercase-trimmed) memo.
+  // `primedChip` holds the original chip label (not normalised) so the
+  // hint line and the styled-chip lookup can compare by exact label.
+  // `primedAt` carries the timestamp so the auto-clear timer + the
+  // confirm-window check have one source of truth.
+  const [repeatCounts, setRepeatCounts] = useState<Map<string, number>>(
+    () => new Map(),
+  );
+  const [primedChip, setPrimedChip] = useState<string | null>(null);
+  const [primedAt, setPrimedAt] = useState<number | null>(null);
+
   const [suggestions, setSuggestions] = useState<MemoSuggestions>({
     label: 'Loading suggestions',
     chips: [],
@@ -159,6 +196,61 @@ export default function HoursEntryScreen() {
       cancelled = true;
     };
   }, [targetProject, phaseCode]);
+
+  // Repeat-memo nudge: fetch this-week submission counts for every chip
+  // the user is about to see, so subsequent chip taps can intercept the
+  // 4th-and-beyond use of any single memo. Skip in edit mode — the
+  // existing entry's memo isn't a chip tap, and counting it against
+  // itself would create a confusing prefilled+primed state.
+  useEffect(() => {
+    if (isEditing) return;
+    if (!user?.id) return;
+    if (suggestions.chips.length === 0) return;
+    let cancelled = false;
+    const weekStartIso = toIsoDay(monday);
+    const weekEndIso = toIsoDay(sunday);
+    getRepeatMemoCounts(user.id, weekStartIso, weekEndIso, suggestions.chips)
+      .then((map) => {
+        if (cancelled) return;
+        setRepeatCounts(map);
+        // Diagnostic — log ONLY the memos at threshold so a quiet week
+        // doesn't fill the in-app buffer with empty arrays. Matches the
+        // [jot:scan-lookup] log pattern from the scan-filter work.
+        const atThreshold = Array.from(map.entries())
+          .filter(([, n]) => n >= REPEAT_THRESHOLD)
+          .map(([k, n]) => `"${k}"=${n}`);
+        if (atThreshold.length > 0) {
+          console.log(
+            `[jot:repeat-nudge] ${atThreshold.length} chip(s) at threshold: ${atThreshold.join(', ')} threshold=${REPEAT_THRESHOLD}`,
+          );
+        }
+      })
+      .catch((err) => {
+        // Repeat counts are advisory — failing the fetch shouldn't block
+        // entry. Leave the map empty so every chip behaves as
+        // non-repeated, and the user submits normally.
+        console.warn(
+          '[jot:repeat-nudge] count fetch failed:',
+          err instanceof Error ? err.message : err,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, user?.id, suggestions.chips, monday, sunday]);
+
+  // Auto-clear the primed state after REPEAT_TIMEOUT_MS. Each
+  // setPrimedAt(Date.now()) call updates the dep, the prior timer is
+  // cleaned up, and a fresh one starts — so re-priming (tapping a
+  // different repeated chip) restarts the window cleanly.
+  useEffect(() => {
+    if (primedAt === null) return;
+    const timer = setTimeout(() => {
+      setPrimedChip(null);
+      setPrimedAt(null);
+    }, REPEAT_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [primedAt]);
 
   const editingLockReason = loadedEntry ? getEntryLockReason(loadedEntry) : null;
   const editingLocked = loadedEntry ? !isEntryEditable(loadedEntry) : false;
@@ -205,13 +297,58 @@ export default function HoursEntryScreen() {
     }
   };
 
-  const onTapChip = (chip: string) => {
-    Haptics.selectionAsync().catch(() => {});
+  // Existing "fill the memo with this chip" behaviour, factored out so
+  // both the non-repeated tap path and the confirmed-repeated tap path
+  // share one implementation.
+  const fillMemoWithChip = (chip: string) => {
     const trimmed = memo.trim();
     const next = trimmed.length === 0 ? chip : `${trimmed}, ${chip}`;
     setMemo(next.slice(0, MEMO_MAX));
     setTappedChips((prev) => new Set(prev).add(chip));
     if (showMemoError) setShowMemoError(false);
+  };
+
+  const clearPrimed = () => {
+    setPrimedChip(null);
+    setPrimedAt(null);
+  };
+
+  const onTapChip = (chip: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    const count = repeatCounts.get(normalizeMemo(chip)) ?? 0;
+    const repeated = isMemoRepeated(count);
+
+    // Non-repeated chip — normal fill behaviour. If a different chip
+    // happened to be primed, the user just bypassed the nudge by
+    // picking something else; clear the primed state.
+    if (!repeated) {
+      if (primedChip) clearPrimed();
+      fillMemoWithChip(chip);
+      return;
+    }
+
+    // Repeated chip + same chip already primed within the window =
+    // confirmation. Fill the memo and clear primed. The state-machine
+    // contract: a second tap of the SAME primed chip within the timeout
+    // is the only way to fill a repeated memo via chip; everything else
+    // (re-prime, type custom text, wait) cancels.
+    if (
+      primedChip === chip &&
+      primedAt !== null &&
+      Date.now() - primedAt < REPEAT_TIMEOUT_MS
+    ) {
+      clearPrimed();
+      fillMemoWithChip(chip);
+      return;
+    }
+
+    // First tap (no primed chip) OR different repeated chip (re-prime)
+    // OR previously primed chip but the window expired (the timer
+    // useEffect should have cleared, but check defensively in case the
+    // user tapped exactly at the boundary). Start a fresh primed window
+    // on this chip; do NOT fill the memo.
+    setPrimedChip(chip);
+    setPrimedAt(Date.now());
   };
 
   const memoLength = memo.trim().length;
@@ -359,6 +496,7 @@ export default function HoursEntryScreen() {
             title: isEditing ? 'Edit entry' : 'Log time',
             headerBackTitle: '',
             headerBackButtonDisplayMode: 'minimal',
+            headerRight: () => <HeaderHomeButton />,
           }}
         />
         <ActivityIndicator color={colors.accent} />
@@ -366,15 +504,10 @@ export default function HoursEntryScreen() {
     );
   }
 
-  // useHeaderHeight returns the live measured nav-bar height (accounting for
-  // status bar + safe-area insets). The previous version used no offset, so
-  // the keyboard could push the Submit button up but the nav bar would
-  // overlap the top of the scroll content. With this offset, KeyboardAvoiding
-  // accounts for both.
-  const headerHeight = useHeaderHeight();
-
   // iOS InputAccessoryView ID. The TextInput references this id so the
   // accessory view docks above the keyboard while the memo field is focused.
+  // (`headerHeight` is captured at the top of the component — see comment
+  // there for why it can't live here below the early return.)
   const memoAccessoryId = 'memo-input-accessory';
 
   return (
@@ -388,6 +521,7 @@ export default function HoursEntryScreen() {
           title: headerTitle,
           headerBackTitle: '',
           headerBackButtonDisplayMode: 'minimal',
+          headerRight: () => <HeaderHomeButton />,
         }}
       />
 
@@ -480,10 +614,19 @@ export default function HoursEntryScreen() {
             onChangeText={(t) => {
               setMemo(t.slice(0, MEMO_MAX));
               if (showMemoError && t.trim().length >= MEMO_MIN) setShowMemoError(false);
+              // Any keystroke means the user is now providing their own
+              // text — the chip-tap nudge no longer applies. Clear the
+              // primed state so the placeholder swap and hint line
+              // disappear immediately. (Placeholder isn't visible while
+              // the user is typing anyway, but clearing keeps the
+              // state-machine invariants tight.)
+              if (primedChip) clearPrimed();
             }}
             onFocus={() => setMemoFocused(true)}
             onBlur={() => setMemoFocused(false)}
-            placeholder="Tap a suggestion or type…"
+            placeholder={
+              primedChip ? 'What specifically today?' : 'Tap a suggestion or type…'
+            }
             placeholderTextColor={colors.textTertiary}
             style={[
               styles.memoInput,
@@ -504,18 +647,35 @@ export default function HoursEntryScreen() {
             </Text>
           ) : null}
 
+          {/*
+            Repeat-memo nudge hint. Renders only when a repeated chip is
+            primed and waiting on a second tap. Single line, 12px,
+            textSecondary — quiet enough not to dominate, explicit
+            enough that the "tap again to use" gesture is discoverable.
+          */}
+          {primedChip ? (
+            <Text style={styles.repeatHint}>
+              {`Tap '${primedChip}' again to use it anyway`}
+            </Text>
+          ) : null}
+
           {suggestions.chips.length > 0 ? (
             <View style={styles.suggestionsArea}>
               <Text style={styles.suggestionsLabel}>{suggestions.label}</Text>
               <View style={styles.chipsRow}>
-                {suggestions.chips.map((chip) => (
-                  <MemoChip
-                    key={chip}
-                    label={chip}
-                    selected={tappedChips.has(chip)}
-                    onPress={() => onTapChip(chip)}
-                  />
-                ))}
+                {suggestions.chips.map((chip) => {
+                  const count = repeatCounts.get(normalizeMemo(chip)) ?? 0;
+                  return (
+                    <MemoChip
+                      key={chip}
+                      label={chip}
+                      selected={tappedChips.has(chip)}
+                      repeated={isMemoRepeated(count)}
+                      primed={primedChip === chip}
+                      onPress={() => onTapChip(chip)}
+                    />
+                  );
+                })}
               </View>
             </View>
           ) : null}
@@ -758,6 +918,16 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: colors.danger,
     marginTop: 2,
+  },
+  // Repeat-nudge discoverability hint — explains the "tap again to
+  // confirm" gesture so users can complete a repeated-memo submission
+  // without confusion. Lives between the input and the chips row,
+  // visible only during the primed window.
+  repeatHint: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    marginTop: 4,
   },
   memoInput: {
     minHeight: 80,
