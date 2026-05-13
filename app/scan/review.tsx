@@ -56,6 +56,17 @@ interface ReviewEntry {
   memo: string;
   flag: ParsedFlag | null;
   source: 'parsed' | 'manual';
+  // BQE rejection message captured from the per-entry fallback in
+  // `submitParsedBatch`. null on a fresh entry; populated after a
+  // partial-submit pass when the BQE call rejected this specific row.
+  // Cleared when the user edits the entry (any field change indicates
+  // they're addressing the rejection).
+  submitError: string | null;
+  // LocalTimeEntry id for this entry's last failed-submit attempt. Used
+  // when the user taps "Retry failed" so `submitParsedBatch` can clean
+  // up the stale failed SQLite row before reinserting. null = never
+  // attempted yet (don't pass to the dedupe path).
+  lastLocalId: number | null;
 }
 
 export default function ReviewScreen() {
@@ -152,6 +163,9 @@ export default function ReviewScreen() {
       hours: value.hours,
       memo: value.memo,
       flag: null,
+      // Clear the previous BQE rejection — any field change means the
+      // user is addressing it. The next submit attempt re-evaluates.
+      submitError: null,
     });
     setEditingId(null);
   };
@@ -168,6 +182,8 @@ export default function ReviewScreen() {
         memo: value.memo,
         flag: null,
         source: 'manual',
+        submitError: null,
+        lastLocalId: null,
       },
     ]);
     setAddingDay(null);
@@ -234,6 +250,16 @@ export default function ReviewScreen() {
       });
     }
 
+    // Pass any prior-attempt localIds so submitParsedBatch can clean up
+    // the previous-failure SQLite rows before reinserting. On the first
+    // attempt every entry's `lastLocalId` is null, so this filters down
+    // to the empty array — no-op. On a "Retry failed" press, only the
+    // failed rows have lastLocalId set, and those get deleted before the
+    // retry attempt inserts new rows.
+    const priorLocalIds = entries
+      .map((e) => e.lastLocalId)
+      .filter((v): v is number => v !== null);
+
     const result = await submitParsedBatch(
       entries.map((e, i) => ({
         projectId: e.phaseProjectId!,
@@ -245,10 +271,13 @@ export default function ReviewScreen() {
         isBillable: true,
         source: 'scanned',
       })),
+      { priorLocalIds },
     );
     setSubmitting(false);
 
-    if (result.ok) {
+    if (result.ok === true) {
+      // Full success — either everything posted, or everything was queued
+      // offline. Either way the review screen is done.
       if (result.queued) {
         showToast(`${result.count} saved locally — will sync when online`, 'info');
       } else {
@@ -260,24 +289,75 @@ export default function ReviewScreen() {
       } else {
         router.replace('/');
       }
+      return;
+    }
+
+    if (result.ok === 'partial') {
+      // Some landed in BQE, some didn't. Filter the on-screen list down
+      // to the failed entries with their per-row error captured, so the
+      // user can fix and retry. Successful entries are now real BQE rows
+      // that the home screen will pick up on next sync; they don't need
+      // to stay visible here.
+      const failedByIndex = new Map(result.failures.map((f) => [f.inputIndex, f]));
+      const remaining: ReviewEntry[] = [];
+      entries.forEach((entry, i) => {
+        const fail = failedByIndex.get(i);
+        if (!fail) return; // succeeded — drop from review list
+        remaining.push({
+          ...entry,
+          submitError: fail.error,
+          lastLocalId: fail.localId,
+        });
+      });
+      setEntries(remaining);
+      const failedCount = result.failures.length;
+      const total = result.successCount + failedCount;
+      showToast(
+        `${result.successCount} of ${total} submitted — ${failedCount} need attention`,
+        'info',
+      );
+      return;
+    }
+
+    // Total failure — every per-entry POST also rejected. Annotate each
+    // entry with its specific error so the user can see which is which.
+    logError('review.submit', result.error);
+    const failedByIndex = new Map(result.failures.map((f) => [f.inputIndex, f]));
+    setEntries((es) =>
+      es.map((entry, i) => {
+        const fail = failedByIndex.get(i);
+        if (!fail) return entry;
+        return {
+          ...entry,
+          submitError: fail.error,
+          lastLocalId: fail.localId,
+        };
+      }),
+    );
+
+    if (result.httpError) {
+      // BQE explicitly rejected — surface the real error string (e.g.
+      // ProjectControlLimitation 031.001). Don't pipe through formatError
+      // because that genericises the message into "BQE rejected this
+      // request" and hides the diagnostic detail.
+      showToast(result.error, 'error');
     } else {
-      logError('review.submit', result.error);
-      if (result.httpError) {
-        // BQE explicitly rejected the batch — surface the real BQE error
-        // string (e.g. ProjectControlLimitation 031.001). Don't pipe
-        // through formatError because that genericises the message into
-        // "BQE rejected this request" and hides the diagnostic detail.
-        showToast(result.error, 'error');
-      } else {
-        // Network/timeout — keep the user-friendly wrapper.
-        showToast(`Submit failed: ${formatError(new Error(result.error)).userMessage}`, 'error');
-      }
+      // Network/timeout — keep the user-friendly wrapper.
+      showToast(
+        `Submit failed: ${formatError(new Error(result.error)).userMessage}`,
+        'error',
+      );
     }
   };
 
   const conf = parsed.overallConfidence;
   const confColor = confidenceColor(conf);
   const totalWarn = totalHours > 0 && (totalHours < WEEK_TOTAL_LOW || totalHours > WEEK_TOTAL_HIGH);
+  // When at least one entry carries a prior submitError, the next submit
+  // is a retry — relabel the button so the user knows they're not
+  // re-trying the whole batch.
+  const hasFailedEntries = entries.some((e) => e.submitError !== null);
+  const failedCount = entries.filter((e) => e.submitError !== null).length;
 
   return (
     <View style={styles.container}>
@@ -417,10 +497,18 @@ export default function ReviewScreen() {
           {submitting ? (
             <>
               <ActivityIndicator color="#FFFFFF" />
-              <Text style={styles.submitText}>Submitting {entries.length} entries…</Text>
+              <Text style={styles.submitText}>
+                {hasFailedEntries
+                  ? `Retrying ${failedCount}…`
+                  : `Submitting ${entries.length} entries…`}
+              </Text>
             </>
           ) : (
-            <Text style={styles.submitText}>Submit to BQE Core</Text>
+            <Text style={styles.submitText}>
+              {hasFailedEntries
+                ? `Retry failed (${failedCount})`
+                : 'Submit to BQE Core'}
+            </Text>
           )}
         </Pressable>
       </ScrollView>
@@ -445,13 +533,18 @@ function EntryDisplayRow({ entry, projectsById, onEdit }: EntryDisplayRowProps) 
   const projectName = parent?.name ?? 'Unknown project';
   const color = parent?.color ?? phase?.color ?? colors.border;
   const flagged = entry.flag !== null;
+  // submitError takes visual precedence over the AI's parse-time flag —
+  // a BQE rejection is more recent and more actionable than the model's
+  // "I'm unsure about this hour" hint.
+  const rejected = entry.submitError !== null;
 
   return (
     <Pressable
       onPress={onEdit}
       style={({ pressed }) => [
         styles.row,
-        flagged && styles.rowFlagged,
+        rejected && styles.rowRejected,
+        !rejected && flagged && styles.rowFlagged,
         pressed && styles.pressed,
       ]}
     >
@@ -468,7 +561,14 @@ function EntryDisplayRow({ entry, projectsById, onEdit }: EntryDisplayRowProps) 
         <Text style={styles.rowMemo} numberOfLines={1}>
           {entry.memo || 'Add a memo'}
         </Text>
-        {flagged ? (
+        {rejected ? (
+          <View style={styles.rejectedRow}>
+            <Ionicons name="alert-circle" size={12} color={colors.danger} />
+            <Text style={styles.rejectedText} numberOfLines={2}>
+              {entry.submitError}
+            </Text>
+          </View>
+        ) : flagged ? (
           <View style={styles.flagRow}>
             <Ionicons name="warning" size={12} color="#92400E" />
             <Text style={styles.flagText}>{entry.flag?.reason}</Text>
@@ -520,6 +620,8 @@ function parsedToReview(parsed: ParsedTimesheet, weekStart: Date): ReviewEntry[]
       memo: e.memo ?? '',
       flag,
       source: 'parsed' as const,
+      submitError: null,
+      lastLocalId: null,
     };
   });
 }
@@ -636,6 +738,25 @@ const styles = StyleSheet.create({
   rowFlagged: {
     backgroundColor: '#FEF3C7',
     borderColor: '#F59E0B',
+  },
+  // BQE-rejected row — sits on top of the AI-flagged styling. Uses the
+  // danger-tint surface so it reads as "you need to fix this" rather
+  // than the amber warning treatment used for AI-flagged ambiguity.
+  rowRejected: {
+    backgroundColor: colors.dangerTint,
+    borderColor: colors.danger,
+  },
+  rejectedRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    marginTop: 4,
+  },
+  rejectedText: {
+    flexShrink: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.danger,
   },
   pressed: {
     opacity: 0.85,

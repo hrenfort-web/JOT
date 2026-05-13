@@ -19,6 +19,42 @@ const RETRY_5XX_DELAY_MS = 800;
 const PROACTIVE_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
 const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
+// Cap for the always-on diagnostic body dumps. 4000 chars comfortably fits
+// a 10-entry timeentry batch (~250 chars/entry pretty-printed) and the
+// largest BQE error envelope we've seen in the wild. Beyond this we
+// truncate with a marker so the in-app log buffer doesn't blow its
+// memory ceiling under a pathological response (e.g. 50KB JSON dump).
+const DIAGNOSTIC_BODY_MAX = 4000;
+
+/**
+ * Pretty-print a request/response body for the diagnostic log channel.
+ * Handles strings (returned as-is), objects (JSON.stringify with 2-space
+ * indent), null/undefined (returned as their string forms), and
+ * unserialisable cycles (returned as "<unserializable>"). Always truncates
+ * to DIAGNOSTIC_BODY_MAX chars with a "… (truncated)" marker so the
+ * in-app log buffer stays bounded.
+ */
+function safePretty(v: unknown): string {
+  let s: string;
+  if (v === undefined) {
+    s = '<no body>';
+  } else if (typeof v === 'string') {
+    s = v;
+  } else if (v === null) {
+    s = 'null';
+  } else {
+    try {
+      s = JSON.stringify(v, null, 2);
+    } catch {
+      s = '<unserializable>';
+    }
+  }
+  if (s.length > DIAGNOSTIC_BODY_MAX) {
+    return `${s.slice(0, DIAGNOSTIC_BODY_MAX)}… (truncated, ${s.length} total chars)`;
+  }
+  return s;
+}
+
 export const bqeClient = axios.create({ timeout: REQUEST_TIMEOUT_MS });
 
 let refreshInFlight: Promise<void> | null = null;
@@ -114,15 +150,38 @@ bqeClient.interceptors.request.use(async (config) => {
       `[jot:bqe] -> ${methodUpper} ${fullUrl}${params}`,
     );
   }
+
+  // ALWAYS-ON diagnostic for write methods. Dumps the outgoing body so we
+  // can correlate any subsequent failure with exactly what we sent. Not
+  // gated on __DEV__ — this is the line H asked for in the preview-build
+  // log buffer. GETs are filtered out so the buffer doesn't flood with
+  // routine list-fetch noise.
+  if (WRITE_METHODS.has(method)) {
+    console.log(
+      `[jot:bqe-request] ${methodUpper} ${config.url ?? ''} payload = ${safePretty(config.data)}`,
+    );
+  }
   return config;
 });
 
 bqeClient.interceptors.response.use(
   (response) => {
-    if (__DEV__) {
-      const cfg = response.config;
+    const cfg = response.config;
+    const cfgMethod = (cfg.method ?? 'get').toLowerCase();
+
+    // ALWAYS-ON diagnostic for write-method success responses. Lets us see
+    // what a passing payload looks like for comparison against a failing
+    // one. Same filter as the request side (writes only) to keep buffer
+    // chatter under control.
+    if (WRITE_METHODS.has(cfgMethod)) {
       console.log(
-        `[jot:bqe] <- ${response.status} ${(cfg.method ?? 'GET').toUpperCase()} ${cfg.baseURL ?? ''}${cfg.url ?? ''}`,
+        `[jot:bqe-response] status=${response.status} body = ${safePretty(response.data)}`,
+      );
+    }
+
+    if (__DEV__) {
+      console.log(
+        `[jot:bqe] <- ${response.status} ${cfgMethod.toUpperCase()} ${cfg.baseURL ?? ''}${cfg.url ?? ''}`,
       );
       const h = response.headers as Record<string, string> | undefined;
       const pagHeaders: Record<string, string> = {};
@@ -165,6 +224,16 @@ bqeClient.interceptors.response.use(
   async (error: AxiosError) => {
     const config = error.config as RetriableConfig | undefined;
     const status = error.response?.status;
+
+    // ALWAYS-ON diagnostic on error — the headline reason this logging
+    // exists. Captures the full response body (pretty-printed, truncated
+    // at 4KB) regardless of __DEV__. Complements the existing
+    // [jot:bqe-error] line from extractBqeErrorMessage, which logs the
+    // same body more tersely. Having both means we always have a
+    // pretty-printed copy in the buffer.
+    console.log(
+      `[jot:bqe-response] status=${status ?? 'NO_RESPONSE'} body = ${safePretty(error.response?.data)}`,
+    );
 
     if (__DEV__) {
       const fullUrl = `${config?.baseURL ?? ''}${config?.url ?? ''}`;
