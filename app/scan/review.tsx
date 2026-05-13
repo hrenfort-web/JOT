@@ -351,7 +351,7 @@ export default function ReviewScreen() {
   };
 
   const conf = parsed.overallConfidence;
-  const confColor = confidenceColor(conf);
+  const confTone = confidenceVariant(conf);
   const totalWarn = totalHours > 0 && (totalHours < WEEK_TOTAL_LOW || totalHours > WEEK_TOTAL_HIGH);
   // When at least one entry carries a prior submitError, the next submit
   // is a retry — relabel the button so the user knows they're not
@@ -377,8 +377,13 @@ export default function ReviewScreen() {
             </Text>
             <Text style={styles.summarySub}>Tap any row to edit before submitting.</Text>
           </View>
-          <View style={[styles.confBadge, { backgroundColor: confColor + '22', borderColor: confColor }]}>
-            <Text style={[styles.confText, { color: confColor }]}>
+          <View
+            style={[
+              styles.confBadge,
+              { backgroundColor: confTone.background, borderColor: confTone.border },
+            ]}
+          >
+            <Text style={[styles.confText, { color: confTone.text }]}>
               {Math.round(conf * 100)}%
             </Text>
           </View>
@@ -399,7 +404,7 @@ export default function ReviewScreen() {
           return (
             <View key={iso} style={styles.dayGroup}>
               <View style={styles.dayHeader}>
-                <Ionicons name="calendar-outline" size={16} color={colors.muted} />
+                <Ionicons name="calendar-outline" size={16} color={colors.textTertiary} />
                 <Text style={styles.dayHeaderTitle}>
                   {d.toLocaleDateString(undefined, { weekday: 'long' })}
                 </Text>
@@ -490,13 +495,20 @@ export default function ReviewScreen() {
           disabled={submitting || entries.length === 0}
           style={({ pressed }) => [
             styles.submitBtn,
+            // Switch to danger-fill when the next submit is a retry of
+            // previously-failed entries. The colour difference signals
+            // "this is the cleanup pass" without changing the geometry.
+            hasFailedEntries && styles.submitBtnRetry,
             (submitting || entries.length === 0) && styles.submitDisabled,
-            pressed && !submitting && styles.pressed,
+            pressed &&
+              !submitting &&
+              entries.length > 0 &&
+              (hasFailedEntries ? styles.submitBtnRetryPressed : styles.submitBtnPressed),
           ]}
         >
           {submitting ? (
             <>
-              <ActivityIndicator color="#FFFFFF" />
+              <ActivityIndicator color={colors.surface} />
               <Text style={styles.submitText}>
                 {hasFailedEntries
                   ? `Retrying ${failedCount}…`
@@ -504,7 +516,14 @@ export default function ReviewScreen() {
               </Text>
             </>
           ) : (
-            <Text style={styles.submitText}>
+            <Text
+              style={[
+                styles.submitText,
+                submitting || entries.length === 0
+                  ? styles.submitTextDisabled
+                  : null,
+              ]}
+            >
               {hasFailedEntries
                 ? `Retry failed (${failedCount})`
                 : 'Submit to BQE Core'}
@@ -570,14 +589,14 @@ function EntryDisplayRow({ entry, projectsById, onEdit }: EntryDisplayRowProps) 
           </View>
         ) : flagged ? (
           <View style={styles.flagRow}>
-            <Ionicons name="warning" size={12} color="#92400E" />
+            <Ionicons name="warning" size={12} color={colors.accent} />
             <Text style={styles.flagText}>{entry.flag?.reason}</Text>
           </View>
         ) : null}
       </View>
       <View style={styles.rowRight}>
         <Text style={styles.rowHours}>{formatHours(entry.hours)}h</Text>
-        <Ionicons name="pencil-outline" size={16} color={colors.muted} />
+        <Ionicons name="pencil-outline" size={16} color={colors.textTertiary} />
       </View>
     </Pressable>
   );
@@ -645,10 +664,24 @@ function aiDayToIso(day: string, weekStart: Date): string {
   return toIsoDay(date);
 }
 
-function confidenceColor(c: number): string {
-  if (c > 0.9) return colors.accent;
-  if (c >= 0.7) return '#F59E0B';
-  return colors.danger;
+// Confidence badge Theme B variants. Three intensities of warmth so the
+// badge reads at a glance:
+//   high (>0.9)        — solid accent fill, cream text. The "AI was sure."
+//   medium (0.7–0.9)   — accent-tinted fill, accent text + border. "OK, verify."
+//   low (<0.7)         — danger-tinted fill, danger text + border. "Please check."
+// Returns the three colours the badge needs as a tuple.
+function confidenceVariant(c: number): {
+  background: string;
+  border: string;
+  text: string;
+} {
+  if (c > 0.9) {
+    return { background: colors.accent, border: colors.accent, text: colors.surface };
+  }
+  if (c >= 0.7) {
+    return { background: colors.accentTint, border: colors.accent, text: colors.accent };
+  }
+  return { background: colors.dangerTint, border: colors.danger, text: colors.danger };
 }
 
 const styles = StyleSheet.create({
@@ -668,24 +701,28 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     gap: 16,
   },
+  // Summary banner — cream surface, hairline border. Theme B convention
+  // for elevated chrome that's still part of the page rhythm.
   summary: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.surface,
     borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 12,
   },
   summaryHeading: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
   },
   summarySub: {
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   confBadge: {
@@ -696,7 +733,7 @@ const styles = StyleSheet.create({
   },
   confText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
   },
   dayGroup: {
     gap: 8,
@@ -709,16 +746,16 @@ const styles = StyleSheet.create({
   },
   dayHeaderTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
   },
   dayHeaderDate: {
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   dayHeaderHours: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   dayBody: {
@@ -729,22 +766,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.surface,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 12,
   },
+  // AI-flagged row (the model is unsure about something — wording or
+  // hours). Accent-muted treatment so the user is drawn to it without
+  // it reading as an error. Reserved-amber treatment removed in Theme B
+  // to avoid two competing warm hues on the same screen.
   rowFlagged: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#F59E0B',
+    backgroundColor: colors.accentTint,
+    borderColor: colors.accent,
+    borderWidth: 1,
   },
   // BQE-rejected row — sits on top of the AI-flagged styling. Uses the
   // danger-tint surface so it reads as "you need to fix this" rather
-  // than the amber warning treatment used for AI-flagged ambiguity.
+  // than the accent-muted treatment used for AI-flagged ambiguity.
   rowRejected: {
     backgroundColor: colors.dangerTint,
     borderColor: colors.danger,
+    borderWidth: 1,
   },
   rejectedRow: {
     flexDirection: 'row',
@@ -755,7 +798,7 @@ const styles = StyleSheet.create({
   rejectedText: {
     flexShrink: 1,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.danger,
   },
   pressed: {
@@ -777,22 +820,25 @@ const styles = StyleSheet.create({
   },
   rowName: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
     flexShrink: 1,
   },
+  // Phase code chip — same accent-muted treatment as the PhasePill
+  // component on home/entry, so the visual signature is consistent
+  // across screens.
   rowPhase: {
     fontSize: 11,
-    fontWeight: '700',
-    color: colors.muted,
+    fontWeight: '500',
+    color: colors.accent,
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 6,
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.accentTint,
   },
   rowMemo: {
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   flagRow: {
     flexDirection: 'row',
@@ -802,8 +848,8 @@ const styles = StyleSheet.create({
   },
   flagText: {
     fontSize: 11,
-    color: '#92400E',
-    fontWeight: '600',
+    color: colors.accent,
+    fontWeight: '500',
     flexShrink: 1,
   },
   rowRight: {
@@ -813,7 +859,7 @@ const styles = StyleSheet.create({
   },
   rowHours: {
     fontSize: 15,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
   },
   addBtn: {
@@ -829,50 +875,76 @@ const styles = StyleSheet.create({
   },
   addBtnText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.accent,
   },
+  // Total bar — same surface/hairline treatment as the summary banner.
+  // The "Week total" value is the second-largest number on the screen
+  // (after the per-day totals); keeps its visual weight via size, not
+  // bold weight.
   totalBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.surface,
     borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     paddingHorizontal: 14,
     paddingVertical: 14,
     marginTop: 8,
   },
   totalLabel: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
+  // "Less than usual / more than 50h" hint — informational, not a
+  // problem. Routes through textSecondary, not warning/danger.
   totalWarn: {
     fontSize: 11,
-    color: '#92400E',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   totalHours: {
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
   },
+  // Submit / Retry-failed button. Pill geometry matches login + hours.
+  // Default fill = accent (green-light submit). When the next submit is
+  // a retry of failed entries, the fill swaps to danger so the colour
+  // signals "you're cleaning up rejected entries" without changing
+  // shape or position.
   submitBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
     backgroundColor: colors.accent,
-    borderRadius: 14,
-    paddingVertical: 16,
-    minHeight: 56,
+    borderRadius: 28,
+    height: 56,
+  },
+  submitBtnPressed: {
+    backgroundColor: colors.accentPressed,
+  },
+  submitBtnRetry: {
+    backgroundColor: colors.danger,
+  },
+  // Pressed-state for the retry variant — darker red. Matches the
+  // accentPressed convention (one step darker than the base).
+  submitBtnRetryPressed: {
+    backgroundColor: '#7E2D22',
   },
   submitDisabled: {
-    backgroundColor: colors.border,
+    backgroundColor: colors.disabledBg,
   },
   submitText: {
-    color: '#FFFFFF',
+    color: colors.surface,
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '500',
+  },
+  submitTextDisabled: {
+    color: colors.disabledText,
   },
 });

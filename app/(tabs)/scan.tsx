@@ -159,6 +159,14 @@ export default function ScanScreen() {
           style={({ pressed }) => [styles.flashToggle, pressed && styles.btnPressed]}
           accessibilityLabel={`Flash ${flash}`}
         >
+          {/*
+            The flash toggle + busy overlay sit ON TOP of the live camera
+            preview, which is dark. Their icon and text stay pure white
+            (not colors.surface) because the camera image itself isn't
+            part of the Theme B cream surface — it's the lens feed.
+            Theme B applies to the chrome around the camera, not on top
+            of the camera.
+          */}
           <Ionicons
             name={flash === 'on' ? 'flash' : 'flash-off'}
             size={20}
@@ -265,7 +273,9 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: colors.subtle,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -280,7 +290,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   captureBtnPressed: {
-    opacity: 0.85,
+    backgroundColor: colors.accentTint,
   },
   captureBtnInner: {
     width: 56,
@@ -319,30 +329,36 @@ const styles = StyleSheet.create({
   },
   permissionTitle: {
     fontSize: 20,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
     textAlign: 'center',
   },
   permissionBody: {
     fontSize: 14,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     paddingHorizontal: 8,
   },
+  // Primary action — same pill geometry as the login + hours.tsx submit
+  // buttons. 56px tall, radius = height/2, accent fill, cream text.
   primaryBtn: {
     backgroundColor: colors.accent,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 14,
-    minWidth: 200,
+    paddingHorizontal: 28,
+    height: 56,
+    borderRadius: 28,
+    minWidth: 220,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
   },
   primaryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+    color: colors.surface,
+    fontSize: 16,
+    fontWeight: '500',
   },
+  // Secondary action — outlined, lower visual weight than primary. The
+  // "Use photo library instead" affordance when camera permission is
+  // denied; not the primary path but always available.
   secondaryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -350,14 +366,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
-    minWidth: 200,
+    backgroundColor: colors.surface,
+    minWidth: 220,
     justifyContent: 'center',
   },
   secondaryBtnText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
 });

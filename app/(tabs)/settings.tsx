@@ -376,6 +376,12 @@ export default function SettingsScreen() {
                 <Switch
                   value={remindersOn}
                   onValueChange={handleEnableToggle}
+                  // iOS Switch component takes platform-conventional
+                  // colours: the off-state track and thumb are part of
+                  // the native control. The "true" track is accent so
+                  // the on state speaks brand. Pure white thumb is
+                  // standard for iOS and reads correctly against both
+                  // accent + grey tracks.
                   trackColor={{ true: colors.accent, false: '#D1D5DB' }}
                   thumbColor="#FFFFFF"
                   ios_backgroundColor="#D1D5DB"
@@ -394,6 +400,11 @@ export default function SettingsScreen() {
               }
               style={({ pressed }) => [styles.warning, pressed && styles.rowPressed]}
             >
+              {/*
+                Notification-permission nag. Same warm-warning treatment
+                used by the login session-expired banner and the hours
+                screen's locked-entry banner — consistent across the app.
+              */}
               <Ionicons name="alert-circle-outline" size={18} color="#92400E" />
               <Text style={styles.warningText}>
                 {permissionCanAskAgain
@@ -823,18 +834,21 @@ const styles = StyleSheet.create({
   section: {
     gap: 8,
   },
+  // Sentence-case section header — Theme B convention from home and
+  // entry screens. 13px / weight 500 / textSecondary / slight positive
+  // tracking. The uppercase + 0.6 tracking of the prior style was
+  // chrome-noise that competed with the row content.
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.2,
     paddingHorizontal: 4,
   },
   sectionBody: {
     backgroundColor: colors.surface,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     overflow: 'hidden',
   },
@@ -859,21 +873,21 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   rowLabelDanger: {
     flex: 1,
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.danger,
   },
   // Admin link — visually distinct but understated, so it never reads as
   // a primary user-facing feature. Smaller and muted compared to rowLabel.
   rowLabelAdmin: {
     fontSize: 13,
-    fontWeight: '600',
-    color: colors.muted,
+    fontWeight: '500',
+    color: colors.textTertiary,
   },
   rowSubtle: {
     fontSize: 12,
@@ -901,13 +915,12 @@ const styles = StyleSheet.create({
   },
   toggleLabel: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
-    letterSpacing: -0.1,
   },
   toggleSubtle: {
     fontSize: 13,
-    color: colors.muted,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   toggleSwitch: {
@@ -933,7 +946,7 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.accent,
   },
   profileMeta: {
@@ -942,12 +955,12 @@ const styles = StyleSheet.create({
   },
   profileName: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
   },
   profileRole: {
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textSecondary,
   },
   connectedRow: {
     flexDirection: 'row',
@@ -970,35 +983,42 @@ const styles = StyleSheet.create({
   connectedText: {
     fontSize: 12,
     color: colors.accent,
-    fontWeight: '600',
+    fontWeight: '500',
   },
 
+  // Pending-count pill — accent-muted treatment, consistent with the
+  // SubmissionBadge "Submitted" pill on entries. "Pending" is not an
+  // error; we just want the user to know something's waiting.
   pendingPill: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.accentTint,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
   },
   pendingPillText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#92400E',
+    fontWeight: '500',
+    color: colors.accent,
   },
 
+  // Notification-permission warning row — kept on the warm-warning
+  // palette (warningTint bg + dark amber text). Same treatment as the
+  // login session-expired banner and the hours.tsx locked-entry banner;
+  // matching across the app means users learn the meaning once.
   warning: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningTint,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
   warningText: {
     flex: 1,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#92400E',
   },
 
@@ -1008,12 +1028,15 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 6,
   },
+  // Choice pill (reminder time + hour targets). Default: cream surface
+  // with hairline border. Selected: solid accent + cream text — same
+  // visual contract as the base hour button on the entry screen.
   choice: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
   choiceSelected: {
@@ -1022,11 +1045,11 @@ const styles = StyleSheet.create({
   },
   choiceText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   choiceTextSelected: {
-    color: '#FFFFFF',
+    color: colors.surface,
   },
 
   memoList: {
@@ -1047,27 +1070,27 @@ const styles = StyleSheet.create({
   memoPhaseBadge: {
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 8,
     backgroundColor: colors.accentTint,
   },
   memoPhaseBadgeText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.accent,
   },
   memoPhaseName: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   memoItem: {
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textSecondary,
     paddingLeft: 8,
   },
   memoNote: {
     fontSize: 11,
-    color: colors.muted,
+    color: colors.textTertiary,
     fontStyle: 'italic',
     marginTop: 4,
   },
@@ -1090,8 +1113,8 @@ const styles = StyleSheet.create({
   },
   debugStatLabel: {
     fontSize: 12,
-    color: colors.muted,
-    fontWeight: '600',
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   debugStatValue: {
     fontSize: 12,
@@ -1116,8 +1139,8 @@ const styles = StyleSheet.create({
   },
   debugRefreshText: {
     fontSize: 12,
-    color: colors.muted,
-    fontWeight: '600',
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
 
   footer: {
@@ -1130,6 +1153,6 @@ const styles = StyleSheet.create({
   },
   footerText: {
     fontSize: 12,
-    color: colors.muted,
+    color: colors.textTertiary,
   },
 });

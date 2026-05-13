@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 10,
     backgroundColor: colors.surface,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
   tbBtnDestructive: {
@@ -194,7 +194,7 @@ const styles = StyleSheet.create({
   },
   tbBtnText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   tbBtnTextDestructive: {
@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
   },
   countLine: {
     fontSize: 11,
-    color: colors.muted,
+    color: colors.textTertiary,
     paddingHorizontal: 16,
     paddingVertical: 8,
     fontFamily: 'monospace',
@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
   timestamp: {
     fontSize: 10,
     fontFamily: 'monospace',
-    color: colors.muted,
+    color: colors.textTertiary,
     minWidth: 78,
   },
   badge: {
@@ -242,18 +242,21 @@ const styles = StyleSheet.create({
     minWidth: 44,
     alignItems: 'center',
   },
+  // Log-level badges: LOG (info) on neutral subtle, WARN on the curated
+  // Theme B warning tint, ERROR on the danger tint. Keeps the three
+  // levels visually distinguishable without raw colour literals.
   badgeLog: {
     backgroundColor: colors.subtle,
   },
   badgeWarn: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningTint,
   },
   badgeError: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerTint,
   },
   badgeText: {
     fontSize: 9,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
     letterSpacing: 0.4,
   },

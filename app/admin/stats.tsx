@@ -284,11 +284,14 @@ export default function StatsScreen() {
 
             <Pressable
               onPress={onExport}
-              style={({ pressed }) => [styles.exportBtn, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.exportBtn,
+                pressed && styles.exportBtnPressed,
+              ]}
               accessibilityRole="button"
               accessibilityLabel="Export raw analysis as JSON"
             >
-              <Ionicons name="share-outline" size={16} color="#FFFFFF" />
+              <Ionicons name="share-outline" size={16} color={colors.surface} />
               <Text style={styles.exportBtnText}>Export as JSON</Text>
             </Pressable>
           </>
@@ -565,12 +568,15 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 12,
   },
+  // Range chooser — same cream/hairline + accent-on-select treatment
+  // used by the choice pill in settings and the base hour button on the
+  // entry screen.
   rangeBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
   rangeBtnActive: {
@@ -579,26 +585,26 @@ const styles = StyleSheet.create({
   },
   rangeBtnText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.text,
   },
   rangeBtnTextActive: {
-    color: '#FFFFFF',
+    color: colors.surface,
   },
   refreshBtn: {
     marginLeft: 'auto',
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.subtle,
-    borderWidth: 1,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   windowLabel: {
     fontSize: 11,
-    color: colors.muted,
+    color: colors.textTertiary,
     fontFamily: 'monospace',
   },
   pressed: {
@@ -632,7 +638,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   muted: {
-    color: colors.muted,
+    color: colors.textTertiary,
     fontSize: 12,
   },
 
@@ -644,40 +650,41 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.surface,
     borderRadius: 14,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     padding: 12,
     gap: 4,
   },
+  // Stat-card label: sentence case, weight 500, textSecondary — matches
+  // the Theme B section-header convention used throughout the app.
   bigCardLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.2,
   },
   bigCardValue: {
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
+    fontVariant: ['tabular-nums'],
   },
   bigCardHint: {
     fontSize: 11,
-    color: colors.muted,
+    color: colors.textTertiary,
   },
 
   sectionHeader: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    letterSpacing: 0.2,
     marginTop: 8,
   },
   barChart: {
     backgroundColor: colors.surface,
     borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     padding: 12,
     gap: 4,
@@ -702,7 +709,7 @@ const styles = StyleSheet.create({
     width: 80,
     textAlign: 'right',
     fontSize: 11,
-    color: colors.muted,
+    color: colors.textTertiary,
     fontVariant: ['tabular-nums'],
   },
 
@@ -727,7 +734,7 @@ const styles = StyleSheet.create({
   },
   cellName: {
     flex: 1,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   cellNum: {
     width: 56,
@@ -735,22 +742,28 @@ const styles = StyleSheet.create({
   },
   cellWarn: {
     color: colors.danger,
-    fontWeight: '700',
+    fontWeight: '500',
   },
 
+  // Export — primary pill, matches the geometry of login + hours
+  // submit. Bumped to 56-tall radius-28 for consistency even though
+  // this is an internal admin tool.
   exportBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 28,
+    height: 56,
     marginTop: 16,
   },
+  exportBtnPressed: {
+    backgroundColor: colors.accentPressed,
+  },
   exportBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+    color: colors.surface,
+    fontSize: 16,
+    fontWeight: '500',
   },
 });

@@ -191,13 +191,19 @@ export default function ProcessingScreen() {
           <View style={styles.actions}>
             <Pressable
               onPress={onTryAgain}
-              style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                pressed && styles.primaryBtnPressed,
+              ]}
             >
               <Text style={styles.primaryBtnText}>Try again</Text>
             </Pressable>
             <Pressable
               onPress={onEnterManually}
-              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.btnPressed]}
+              style={({ pressed }) => [
+                styles.secondaryBtn,
+                pressed && styles.secondaryBtnPressed,
+              ]}
             >
               <Text style={styles.secondaryBtnText}>Enter manually</Text>
             </Pressable>
@@ -299,6 +305,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  // Step indicators: idle (upcoming) is the most muted, active is the
+  // accent moment, complete sits between — visible but no longer the
+  // focus of attention.
   stepDotIdle: {
     width: 12,
     height: 12,
@@ -313,15 +322,16 @@ const styles = StyleSheet.create({
   },
   stepText: {
     fontSize: 15,
-    color: colors.muted,
-    fontWeight: '500',
+    color: colors.textTertiary,
+    fontWeight: '400',
   },
   stepTextActive: {
-    color: colors.text,
-    fontWeight: '600',
+    color: colors.accent,
+    fontWeight: '500',
   },
   stepTextComplete: {
-    color: colors.text,
+    color: colors.textSecondary,
+    fontWeight: '400',
   },
   iconCircle: {
     width: 72,
@@ -331,17 +341,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconCircleError: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerTint,
   },
   errorTitle: {
     fontSize: 20,
-    fontWeight: '700',
+    fontWeight: '500',
     color: colors.text,
     textAlign: 'center',
   },
   errorBody: {
     fontSize: 14,
-    color: colors.muted,
+    color: colors.textSecondary,
     textAlign: 'center',
     paddingHorizontal: 8,
   },
@@ -351,30 +361,41 @@ const styles = StyleSheet.create({
     maxWidth: 280,
     marginTop: 12,
   },
+  // Primary "Try again" — same pill geometry as login/hours submit.
   primaryBtn: {
     backgroundColor: colors.accent,
-    paddingVertical: 14,
-    borderRadius: 14,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   primaryBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
+    color: colors.surface,
+    fontSize: 16,
+    fontWeight: '500',
   },
+  // Secondary "Enter manually" — outlined, lower weight.
   secondaryBtn: {
-    paddingVertical: 14,
-    borderRadius: 14,
-    borderWidth: 1,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
+    backgroundColor: colors.surface,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   secondaryBtnText: {
     color: colors.text,
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  btnPressed: {
-    opacity: 0.85,
+  // Primary pressed: shift to the darker accent (accentPressed). Matches
+  // login + hours submit.
+  primaryBtnPressed: {
+    backgroundColor: colors.accentPressed,
+  },
+  // Secondary pressed: subtle accent-muted wash on the cream surface.
+  secondaryBtnPressed: {
+    backgroundColor: colors.accentTint,
   },
 });
