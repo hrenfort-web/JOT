@@ -3,6 +3,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../theme';
 import { WeekBar } from '../../components/WeekBar';
+import { HeaderHomeButton } from '../../components/HeaderHomeButton';
 import { PhaseButton } from '../../components/PhaseButton';
 import { PhaseList, type PhaseGroup } from '../../components/PhaseList';
 import { EmptyState } from '../../components/EmptyState';
@@ -174,6 +175,7 @@ export default function PhaseSelectionScreen() {
             title: headerTitle,
             headerBackTitle: '',
             headerBackButtonDisplayMode: 'minimal',
+            headerRight: () => <HeaderHomeButton />,
           }}
         />
         <ActivityIndicator color={colors.accent} />
@@ -189,6 +191,7 @@ export default function PhaseSelectionScreen() {
             title: 'Project',
             headerBackTitle: '',
             headerBackButtonDisplayMode: 'minimal',
+            headerRight: () => <HeaderHomeButton />,
           }}
         />
         <EmptyState
@@ -208,6 +211,7 @@ export default function PhaseSelectionScreen() {
             title: headerTitle,
             headerBackTitle: '',
             headerBackButtonDisplayMode: 'minimal',
+            headerRight: () => <HeaderHomeButton />,
           }}
         />
         <ActivityIndicator color={colors.accent} />
@@ -222,6 +226,7 @@ export default function PhaseSelectionScreen() {
           title: headerTitle,
           headerBackTitle: '',
           headerBackButtonDisplayMode: 'minimal',
+          headerRight: () => <HeaderHomeButton />,
         }}
       />
 
