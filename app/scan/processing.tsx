@@ -14,9 +14,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { useScanStore } from '../../store/useScanStore';
 import { useProjectStore } from '../../store/useProjectStore';
-import { buildProjectLookup } from '../../services/ai/matcher';
+import { useAuthStore } from '../../store/useAuthStore';
+import { buildScanLookup } from '../../services/ai/matcher';
 import { parseTimesheetImage } from '../../services/ai/scanner';
+import { loadLocalEntriesInRange } from '../../services/bqe/timeentry';
 import { logError } from '../../services/errors';
+import { DEFAULT_RECENT_DAYS } from '../../utils/projectSort';
+import type { LocalTimeEntry } from '../../db/schema';
 
 const STEPS = [
   'Reading your notes…',
@@ -33,6 +37,7 @@ export default function ProcessingScreen() {
   const captured = useScanStore((s) => s.captured);
   const setParsed = useScanStore((s) => s.setParsed);
   const flatProjects = useProjectStore((s) => s.flatProjects);
+  const user = useAuthStore((s) => s.user);
 
   const [stepIndex, setStepIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +74,38 @@ export default function ProcessingScreen() {
 
     (async () => {
       try {
-        const lookup = buildProjectLookup(flatProjects);
+        // Load the user's recent entries so the scan lookup can filter
+        // down to (recent ∪ overhead) instead of shipping every active
+        // project firm-wide. ~50-200ms SQLite read on Studio G's data.
+        // Empty/error → fall through with [] entries; buildScanLookup
+        // still ships overhead-only, which is better than failing the
+        // scan entirely.
+        let recentEntries: LocalTimeEntry[] = [];
+        if (user?.id) {
+          const end = new Date();
+          const start = new Date();
+          start.setDate(end.getDate() - DEFAULT_RECENT_DAYS);
+          try {
+            recentEntries = await loadLocalEntriesInRange(user.id, start, end);
+          } catch (loadErr) {
+            console.warn(
+              '[jot:scan-lookup] recent-entries load failed, falling back to overhead-only:',
+              loadErr instanceof Error ? loadErr.message : loadErr,
+            );
+          }
+        }
+
+        const { lookup, debug } = buildScanLookup(
+          flatProjects,
+          recentEntries,
+          user?.id ?? '',
+        );
+        console.log(
+          `[jot:scan-lookup] filtered ${debug.finalParents} parents from ${debug.totalParents} total ` +
+            `(recent=${debug.recentCount}, overhead=${debug.overheadCount}, capped=${debug.capped}), ` +
+            `${debug.phaseCount} phases in prompt, ~${debug.estimatedTokens} tokens estimated`,
+        );
+
         const parsed = await parseTimesheetImage(captured.base64, lookup, {
           signal: controller.signal,
         });
@@ -108,7 +144,7 @@ export default function ProcessingScreen() {
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [captured, flatProjects, router, setParsed]);
+  }, [captured, flatProjects, router, setParsed, user?.id]);
 
   useEffect(() => {
     if (error || done) return;
