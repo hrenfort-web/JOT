@@ -278,6 +278,7 @@ export async function saveEmployees(employees: BqeEmployee[]): Promise<void> {
     ['id', 'displayName', 'firstName', 'lastName', 'role', 'standardHoursPerWeek'],
     rows,
     'id',
+    'saveEmployees',
   );
 }
 

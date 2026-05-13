@@ -98,6 +98,7 @@ async function persistFetchedEntries(entries: BqeTimeEntry[]): Promise<void> {
     ],
     rows,
     'bqeId',
+    'persistFetchedEntries',
   );
 }
 

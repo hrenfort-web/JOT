@@ -31,6 +31,7 @@ export async function saveActivities(activities: BqeActivity[]): Promise<void> {
     ['id', 'name', 'code', 'isBillable', 'isActive'],
     rows,
     'id',
+    'saveActivities',
   );
 }
 

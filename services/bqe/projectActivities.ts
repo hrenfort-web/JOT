@@ -131,6 +131,7 @@ export async function saveProjectActivityGroups(
     ['id', 'projectId', 'groupId', 'groupName', 'itemType', 'lastSynced'],
     rows,
     'id',
+    'saveProjectActivityGroups',
   );
 }
 

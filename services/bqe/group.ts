@@ -186,6 +186,7 @@ export async function saveGroupDetails(groups: GroupDetail[]): Promise<void> {
     ['id', 'name', 'activityIds', 'lastSynced'],
     rows,
     'id',
+    'saveGroupDetails',
   );
 }
 

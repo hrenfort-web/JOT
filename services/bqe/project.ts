@@ -215,6 +215,7 @@ export async function saveProjects(projects: BqeProject[]): Promise<void> {
     ],
     rows,
     'id',
+    'saveProjects',
   );
 }
 
