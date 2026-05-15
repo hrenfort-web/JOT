@@ -23,11 +23,8 @@ import {
   requestNotificationPermission,
   rescheduleAllReminders,
 } from '../../services/notifications/reminders';
-import {
-  getLastSyncTime,
-  runInitialSync,
-} from '../../services/sync/initialSync';
-import { useProjectStore } from '../../store/useProjectStore';
+import { getLastSyncTime } from '../../services/sync/initialSync';
+import { useSyncStore } from '../../store/useSyncStore';
 import { useToastStore } from '../../store/useToastStore';
 import { getFirst } from '../../db/database';
 import { FIRM_SETTING_KEYS, readFirmSetting } from '../../services/firmSettings';
@@ -87,14 +84,13 @@ export default function SettingsScreen() {
   const refreshPermission = useReminderStore((s) => s.refreshPermission);
   const updatePrefs = useReminderStore((s) => s.updatePrefs);
 
-  const refreshProjects = useProjectStore((s) => s.refresh);
   const pendingEntries = useEntryStore((s) => s.pendingEntries);
   const refreshEntries = useEntryStore((s) => s.refreshLocal);
   const showToast = useToastStore((s) => s.show);
 
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [syncing, setSyncing] = useState(false);
+  const isSyncing = useSyncStore((s) => s.isSyncing);
   const [memoExpanded, setMemoExpanded] = useState(false);
   const [debugExpanded, setDebugExpanded] = useState(false);
   const [debugStats, setDebugStats] = useState<DebugStats | null>(null);
@@ -244,19 +240,19 @@ export default function SettingsScreen() {
   };
 
   const handleSyncNow = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    try {
-      await runInitialSync();
-      await refreshProjects();
-      await refreshEntries();
-      await loadStats();
-      showToast('Synced with BQE Core', 'success');
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Sync failed';
-      showToast(message, 'error');
-    } finally {
-      setSyncing(false);
+    // runSync is single-flight: a button mash while a sync is already in
+    // flight gets back the existing promise and resolves with the same
+    // outcome. No local guard needed. runSync swallows errors into
+    // useSyncStore.lastError; check the field after awaiting to surface
+    // the result. refreshProjects/refreshEntries are NOT needed here —
+    // runInitialSync's tail already calls both store refreshes.
+    await useSyncStore.getState().runSync('manual');
+    await loadStats();
+    const error = useSyncStore.getState().lastError;
+    if (error) {
+      showToast(`Sync failed: ${error}`, 'error');
+    } else {
+      showToast('Sync complete', 'success');
     }
   };
 
@@ -314,12 +310,12 @@ export default function SettingsScreen() {
               </Text>
             </View>
           </Row>
-          <Row onPress={handleSyncNow} disabled={syncing}>
+          <Row onPress={handleSyncNow} disabled={isSyncing}>
             <View style={styles.rowBody}>
               <Text style={styles.rowLabel}>Sync now</Text>
               <Text style={styles.rowSubtle}>Refresh projects, activities, and entries</Text>
             </View>
-            {syncing ? (
+            {isSyncing ? (
               <Text style={styles.rowMeta}>Syncing…</Text>
             ) : (
               <Ionicons name="refresh" size={18} color={colors.muted} />

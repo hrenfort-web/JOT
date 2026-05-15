@@ -44,7 +44,7 @@ import {
   clearDemoData,
   seedDemoData,
 } from '../services/demo/seedData';
-import { runInitialSync } from '../services/sync/initialSync';
+import { useSyncStore } from './useSyncStore';
 
 export type LogoutReason = 'manual' | 'session_expired';
 
@@ -113,14 +113,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
     // Force a fresh sync of projects/activities/employees so the home screen
-    // doesn't fall back to whatever was in SQLite. If the network or any
-    // single endpoint fails, the home screen's bootstrap effect will retry on
-    // mount; we don't want to block login on a sync hiccup.
-    try {
-      await runInitialSync();
-    } catch (e) {
-      if (__DEV__) console.log('[jot:auth] post-login sync failed:', e);
-    }
+    // doesn't fall back to whatever was in SQLite. Routed through the sync
+    // store (single-flight + isStale-cancellable + error captured to
+    // lastError). The post-auth effect in app/_layout.tsx will also fire
+    // when isAuthenticated flips true; the store's in-flight-promise return
+    // collapses both into one actual sync run. No try/catch — runSync
+    // swallows errors into lastError and does not re-throw.
+    await useSyncStore.getState().runSync('post-login');
   },
 
   loginAsDemo: async () => {
@@ -145,6 +144,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async (reason = 'manual') => {
+    // Cancel any in-flight sync FIRST so its writes are gated by isStale
+    // before we tear down the auth state it depends on. Bumps the
+    // generation counter inside useSyncStore — any in-flight runInitialSync
+    // call bails at its next isStale check without writing stale
+    // BQE-fetched data into SQLite for a user that's just logged out.
+    // Multi-tenant safe (a consultant switching firms won't carry over
+    // the previous firm's activity-group sweep data).
+    useSyncStore.getState().cancelSync();
+
     // Always run all three cleanups so switching between real and demo
     // mode never leaves stale tokens in SecureStore, a stale persisted
     // user object (which would resurrect "Hi, Hadyn" on the login
@@ -196,6 +204,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const tokens = await loadTokens();
       if (!tokens) {
         console.log('[jot:auth] loadStoredTokens: no tokens in SecureStore');
+        console.log('[jot:auth] isReady→true (no-tokens path)');
         set({ isReady: true });
         return;
       }
@@ -270,6 +279,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         console.log('[jot:auth] decision: token still valid, skipping refresh');
       }
     } finally {
+      console.log('[jot:auth] isReady→true (finally path)');
       set({ isReady: true });
       console.log(`[jot:auth] loadStoredTokens END — ${Date.now() - t0}ms total`);
     }

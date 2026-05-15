@@ -115,8 +115,10 @@ function sleep(ms: number): Promise<void> {
 
 export async function saveProjectActivityGroups(
   bindings: ProjectActivityGroupBinding[],
+  isStale?: () => boolean,
 ): Promise<void> {
   if (bindings.length === 0) return;
+  if (isStale?.()) return;
   const now = new Date().toISOString();
   const rows = bindings.map((b) => [
     b.id,

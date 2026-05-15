@@ -7,6 +7,7 @@ import {
   LocalTimeEntryRow,
   entryFromRow,
 } from '../../db/schema';
+import { parseSourceTag } from '../../utils/sourceTag';
 
 export interface BqeTimeEntry {
   id: string;
@@ -32,6 +33,24 @@ export interface CreateTimeEntryPayload {
   billable: boolean;
   description?: string;
   memo?: string;
+}
+
+// Slim projection consumed by submitEntriesToWorkflow. Mirrors the fields
+// updateEntry sends so the workflow PUT carries the full timeentry model
+// (BQE's PUT contract — see comment above submitEntriesToWorkflow for the
+// reasoning). Caller builds this from a LocalTimeEntry; description is
+// derived via applySourceTag so the source tag round-trips.
+export interface WorkflowSubmitEntry {
+  bqeId: string;
+  projectId: string;
+  activityId: string;
+  resourceId: string;
+  date: string;
+  hours: number;
+  isBillable: boolean;
+  memo: string | null;
+  description: string | null;
+  version: string | null;
 }
 
 function toApiPayload(p: CreateTimeEntryPayload) {
@@ -74,7 +93,12 @@ async function persistFetchedEntries(entries: BqeTimeEntry[]): Promise<void> {
     e.memo ?? e.description ?? null,
     sqliteBool(e.billable ?? true),
     'synced',
-    'manual' as EntrySource,
+    // Recover the original source from the BQE description tag (we apply
+    // it on every write via utils/sourceTag). Untagged entries (created
+    // before tagging shipped, or by another BQE client) fall back to
+    // 'manual'. Without this, re-installed devices would mis-attribute
+    // every fetched scan entry.
+    (parseSourceTag(e.description) ?? 'manual') as EntrySource,
     now,
     e.billStatus ?? null,
     e.version != null ? String(e.version) : null,
@@ -412,25 +436,81 @@ export async function loadDraftSyncedEntries(
 
 // Submit time entries to BQE's workflow (locks them for PM approval).
 //
-// BQE support told us to "use the nested workflow field in the timeEntry to submit"
-// (https://api-explorer.bqecore.com/docs/api/apis/timeentry). The /timeentry response
-// schema documents `workflow` as an array of objects with fields { action, type,
-// submitTo, submitToId, sendTo, sendToId, memo, token, version, ... } but the docs
-// do NOT specify the exact body shape for "submit." The implementation below sends
-// the simplest reasonable shape — PUT /timeentry/{id} with a single workflow object
-// using `action: 'Submit'`. If BQE requires `submitToId` (the PM employee), `type`,
-// or a different verb, the response body in our [jot:bqe] error logs will show the
-// rejection reason and we iterate.
+// Body shape: BQE support told us to "use the nested workflow field in the
+// timeEntry to submit" (https://api-explorer.bqecore.com/docs/api/apis/timeentry).
+// The emphasis is on "nested ... in the timeEntry" — the workflow array is
+// one field WITHIN the timeentry body, not the entire body. Earlier
+// implementation sent only `{ workflow: [{ action: 'Submit' }] }` and was
+// rejected with 409 OutDatedModel on every call (no entity model, no
+// version to compare against the server row). The current shape mirrors
+// updateEntry's working PUT body — identity + date + actualHours + billable
+// + version — and adds workflow as a nested field.
 //
-// TODO: Confirm exact body shape with BQE support (CoreDeveloper@bqe.com) once we
-// have a sandbox test entry.
-export async function submitEntriesToWorkflow(bqeIds: string[]): Promise<void> {
-  if (bqeIds.length === 0) return;
-  for (const id of bqeIds) {
-    await bqeClient.put(`/timeentry/${id}`, {
+// Partial-batch-failure semantics: each entry's PUT is wrapped in its own
+// try/catch. A per-entry failure does NOT abort the loop or throw upstream.
+// Successes and failures are accumulated into separate arrays and returned
+// together. The caller (submitWeek in useEntryStore) maps the succeeded
+// bqeIds back to localIds and marks ONLY those as 'submitted', so a partial
+// network blip can never leave local state out of sync with BQE state in
+// the direction that hides successful server-side submissions.
+//
+// Version-required invariant: every entry passed in MUST carry a non-null
+// `version`. The caller filters out version=null drafts before calling, and
+// returns ok:false to the UI if none remain. Submitting without version
+// bypasses the OutDatedModel concurrency guard — exactly the failure mode
+// we just fixed — so silently allowing it would re-create the bug. Synced
+// entries should always have a version; a missing one is a sync bug that
+// surfaces as a logged warning at the caller, not a silent bypass here.
+//
+// Logging: per-PUT request/response/error lines were removed — the
+// [jot:bqe-request] / [jot:bqe-response] interceptors in services/bqe/client.ts
+// already capture each call. Only the aggregate summary is emitted here
+// under the [jot:submit-week] prefix.
+//
+// Remaining open questions if a real-data run still partially fails:
+//   - Action verb: 'Submit' vs 'submit' vs 'SubmitForApproval'
+//   - Workflow target: does BQE require submitTo / submitToId (the PM)?
+//   - Version placement: body root vs workflow[0].version
+export async function submitEntriesToWorkflow(
+  entries: WorkflowSubmitEntry[],
+): Promise<{
+  succeeded: string[];
+  failed: Array<{ bqeId: string; error: string }>;
+}> {
+  if (entries.length === 0) return { succeeded: [], failed: [] };
+  const succeeded: string[] = [];
+  const failed: Array<{ bqeId: string; error: string }> = [];
+  for (const entry of entries) {
+    const url = `/timeentry/${entry.bqeId}`;
+    const body: Record<string, unknown> = {
+      projectId: entry.projectId,
+      activityId: entry.activityId,
+      resourceId: entry.resourceId,
+      date: toBqeDate(entry.date),
+      actualHours: entry.hours,
+      billable: entry.isBillable,
+      version: entry.version,
       workflow: [{ action: 'Submit' }],
-    });
+    };
+    // Conditional memo/description — mirror updateEntry's pattern: only
+    // include when present locally. Avoids sending explicit nulls that
+    // would overwrite BQE-side state for fields we aren't intending to
+    // change. version is NOT conditional here (caller-enforced invariant
+    // — see version-required note in the doc comment above).
+    if (entry.memo !== null) body.memo = entry.memo;
+    if (entry.description !== null) body.description = entry.description;
+    try {
+      await bqeClient.put(url, body);
+      succeeded.push(entry.bqeId);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      failed.push({ bqeId: entry.bqeId, error: message });
+    }
   }
+  console.log(
+    `[jot:submit-week] submitEntriesToWorkflow summary succeeded=${succeeded.length} failed=${failed.length}`,
+  );
+  return { succeeded, failed };
 }
 
 export async function patchLocalEntry(

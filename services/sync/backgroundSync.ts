@@ -50,9 +50,14 @@ const DEFAULT_RETRY_AFTER_SECONDS = 60;
 
 let running = false;
 
-export async function syncAllActivityGroupsInBackground(): Promise<void> {
+export async function syncAllActivityGroupsInBackground(
+  isStale?: () => boolean,
+): Promise<void> {
   if (running) {
     console.warn('[jot:sync-bg] already running, skipping duplicate kickoff');
+    return;
+  }
+  if (isStale?.()) {
     return;
   }
   running = true;
@@ -76,6 +81,7 @@ export async function syncAllActivityGroupsInBackground(): Promise<void> {
     const totalBatches = Math.ceil(projectIds.length / BATCH_SIZE);
 
     for (let i = 0; i < projectIds.length; i += BATCH_SIZE) {
+      if (isStale?.()) break;
       const batch = projectIds.slice(i, i + BATCH_SIZE);
       const batchStart = Date.now();
       // BATCH_SIZE is currently 1 so `batch` always has one project.
@@ -128,8 +134,9 @@ export async function syncAllActivityGroupsInBackground(): Promise<void> {
       }
 
       if (bindings !== null) {
+        if (isStale?.()) break;
         try {
-          await saveProjectActivityGroups(bindings);
+          await saveProjectActivityGroups(bindings, isStale);
           for (const g of uniqueGroupIdsFromBindings(bindings)) allGroupIds.add(g);
           console.log(
             `[jot:sync-bg] batch ${batchIndex}/${totalBatches} end (success, ${Date.now() - batchStart}ms, ${bindings.length} bindings)`,
@@ -168,8 +175,9 @@ export async function syncAllActivityGroupsInBackground(): Promise<void> {
     // from the eager phase). Bounded by the unique-group set, not the
     // project set, so this is a single small fetch even on big tenants.
     if (allGroupIds.size > 0) {
+      if (isStale?.()) return;
       try {
-        await fetchAndSaveGroupDetails(Array.from(allGroupIds));
+        await fetchAndSaveGroupDetails(Array.from(allGroupIds), isStale);
       } catch (e) {
         console.warn(
           '[jot:sync-bg] group/detail follow-up FAILED:',
@@ -177,6 +185,8 @@ export async function syncAllActivityGroupsInBackground(): Promise<void> {
         );
       }
     }
+
+    if (isStale?.()) return;
 
     await writeFirmSetting(
       FIRM_SETTING_KEYS.ACTIVITY_GROUPS_LAST_FULL_SYNC,

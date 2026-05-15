@@ -24,6 +24,29 @@ const GRID_MAX = 6;
 const LIST_SEARCH_MIN = 12;
 const RECENCY_WINDOW_DAYS = 90;
 
+// Stable module-scope reference for the header-right slot — prevents
+// inline arrow churn on every render. See app/_layout.tsx and
+// app/entry/hours.tsx for the broader hoisting rationale.
+const renderHeaderHomeButton = () => <HeaderHomeButton />;
+
+// Static options block used by the project-not-found early return.
+// Title is the literal 'Project', so this is fully hoistable.
+const PROJECT_NOT_FOUND_OPTIONS = {
+  title: 'Project',
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+  headerRight: renderHeaderHomeButton,
+};
+
+// Stable parts shared by the three other emit sites — title is dynamic
+// (`headerTitle`) so the final options object is composed via useMemo
+// inside the component.
+const PICKER_SCREEN_OPTIONS_BASE = {
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+  headerRight: renderHeaderHomeButton,
+};
+
 interface SortedPhases {
   recent: LocalProject[];
   other: LocalProject[];
@@ -166,18 +189,18 @@ export default function PhaseSelectionScreen() {
   };
 
   const headerTitle = project?.name ?? 'Project';
+  // Memoised options object shared across the three emit sites that use
+  // `headerTitle` (loading state, single-phase state, main render).
+  // Only re-derives when the title string actually changes.
+  const pickerScreenOptions = useMemo(
+    () => ({ ...PICKER_SCREEN_OPTIONS_BASE, title: headerTitle }),
+    [headerTitle],
+  );
 
   if (!projectsLoaded || isLoadingProjects) {
     return (
       <View style={styles.center}>
-        <Stack.Screen
-          options={{
-            title: headerTitle,
-            headerBackTitle: '',
-            headerBackButtonDisplayMode: 'minimal',
-            headerRight: () => <HeaderHomeButton />,
-          }}
-        />
+        <Stack.Screen options={pickerScreenOptions} />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -186,14 +209,7 @@ export default function PhaseSelectionScreen() {
   if (!project) {
     return (
       <View style={styles.center}>
-        <Stack.Screen
-          options={{
-            title: 'Project',
-            headerBackTitle: '',
-            headerBackButtonDisplayMode: 'minimal',
-            headerRight: () => <HeaderHomeButton />,
-          }}
-        />
+        <Stack.Screen options={PROJECT_NOT_FOUND_OPTIONS} />
         <EmptyState
           icon="alert-circle-outline"
           title="Project not found"
@@ -206,14 +222,7 @@ export default function PhaseSelectionScreen() {
   if (phases.length <= 1) {
     return (
       <View style={styles.center}>
-        <Stack.Screen
-          options={{
-            title: headerTitle,
-            headerBackTitle: '',
-            headerBackButtonDisplayMode: 'minimal',
-            headerRight: () => <HeaderHomeButton />,
-          }}
-        />
+        <Stack.Screen options={pickerScreenOptions} />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -221,14 +230,7 @@ export default function PhaseSelectionScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: headerTitle,
-          headerBackTitle: '',
-          headerBackButtonDisplayMode: 'minimal',
-          headerRight: () => <HeaderHomeButton />,
-        }}
-      />
+      <Stack.Screen options={pickerScreenOptions} />
 
       {/*
         Compact WeekBar — same chrome as the home screen pills, minus

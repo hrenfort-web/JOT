@@ -282,8 +282,11 @@ export async function saveEmployees(employees: BqeEmployee[]): Promise<void> {
   );
 }
 
-export async function fetchAndSaveEmployees(): Promise<number> {
+export async function fetchAndSaveEmployees(
+  isStale?: () => boolean,
+): Promise<number> {
   const employees = await fetchEmployees();
+  if (isStale?.()) return 0;
   await saveEmployees(employees);
   return employees.length;
 }

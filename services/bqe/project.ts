@@ -219,8 +219,11 @@ export async function saveProjects(projects: BqeProject[]): Promise<void> {
   );
 }
 
-export async function fetchAndSaveProjects(): Promise<number> {
+export async function fetchAndSaveProjects(
+  isStale?: () => boolean,
+): Promise<number> {
   const projects = await fetchProjects();
+  if (isStale?.()) return 0;
   await saveProjects(projects);
   return projects.length;
 }

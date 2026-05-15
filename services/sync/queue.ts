@@ -1,6 +1,6 @@
 import { AxiosError } from 'axios';
 import { getAll } from '../../db/database';
-import { LocalTimeEntryRow } from '../../db/schema';
+import { EntrySource, LocalTimeEntryRow } from '../../db/schema';
 import {
   createEntry,
   markEntryFailedWithError,
@@ -8,6 +8,7 @@ import {
   markEntrySyncedWithBqeId,
 } from '../bqe/timeentry';
 import { isOnline } from './connectivity';
+import { applySourceTag } from '../../utils/sourceTag';
 import { useAuthStore } from '../../store/useAuthStore';
 
 const MAX_RETRIES = 3;
@@ -71,6 +72,10 @@ export async function processQueue(): Promise<QueueResult> {
     for (const row of pending) {
       attempted += 1;
       try {
+        // Source tag goes in `description` (memo stays user content only).
+        // The row's source survives offline → online transition because
+        // insertLocalEntry persisted it, so a manual entry created in
+        // airplane mode lands in BQE with #jm when the queue drains.
         const created = await createEntry({
           projectId: row.projectId,
           activityId: row.activityId,
@@ -79,7 +84,7 @@ export async function processQueue(): Promise<QueueResult> {
           actualHours: row.hours,
           billable: !!row.isBillable,
           memo: row.memo ?? '',
-          description: row.memo ?? '',
+          description: applySourceTag(row.memo ?? '', row.source as EntrySource),
         });
         await markEntrySyncedWithBqeId(
           row.id,

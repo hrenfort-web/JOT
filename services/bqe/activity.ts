@@ -35,8 +35,11 @@ export async function saveActivities(activities: BqeActivity[]): Promise<void> {
   );
 }
 
-export async function fetchAndSaveActivities(): Promise<number> {
+export async function fetchAndSaveActivities(
+  isStale?: () => boolean,
+): Promise<number> {
   const activities = await fetchActivities();
+  if (isStale?.()) return 0;
   await saveActivities(activities);
   return activities.length;
 }

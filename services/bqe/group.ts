@@ -192,8 +192,10 @@ export async function saveGroupDetails(groups: GroupDetail[]): Promise<void> {
 
 export async function fetchAndSaveGroupDetails(
   groupIds: string[],
+  isStale?: () => boolean,
 ): Promise<number> {
   const groups = await fetchGroupDetails(groupIds);
+  if (isStale?.()) return 0;
   await saveGroupDetails(groups);
   return groups.length;
 }

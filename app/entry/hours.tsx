@@ -63,6 +63,20 @@ import type { LocalTimeEntry } from '../../db/schema';
 const WEEKDAYS = 5;
 const BASE_HOURS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
+// Stable module-scope reference for the header-right slot — prevents
+// inline arrow churn on every render, which was hypothesised as the
+// trigger for expo-router rebuilding nav state at sync completion.
+const renderHeaderHomeButton = () => <HeaderHomeButton />;
+
+// Stable parts of the Stack.Screen options. Title is dynamic so the
+// final options object is composed via useMemo inside the component
+// with `title` as the only changing input.
+const HOURS_SCREEN_OPTIONS_BASE = {
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+  headerRight: renderHeaderHomeButton,
+};
+
 interface Modifier {
   label: string;
   delta?: number;
@@ -130,6 +144,20 @@ export default function HoursEntryScreen() {
 
   const phaseCode = targetProject?.isPhase ? targetProject.phaseCode : null;
   const headerTitle = parentProject?.name ?? targetProject?.name ?? 'Log time';
+  // Memoised options objects keyed on the dynamic title strings. Pairs
+  // with HOURS_SCREEN_OPTIONS_BASE at module scope so the only thing
+  // that can change the options' identity is an actual title change.
+  const loadingScreenOptions = useMemo(
+    () => ({
+      ...HOURS_SCREEN_OPTIONS_BASE,
+      title: isEditing ? 'Edit entry' : 'Log time',
+    }),
+    [isEditing],
+  );
+  const mainScreenOptions = useMemo(
+    () => ({ ...HOURS_SCREEN_OPTIONS_BASE, title: headerTitle }),
+    [headerTitle],
+  );
 
   const [hours, setHours] = useState(0);
   // The base button (1–8) the user tapped to seed the total. Tracked
@@ -491,14 +519,7 @@ export default function HoursEntryScreen() {
   if (loadingEntry || (isEditing && !loadedEntry) || !targetProject) {
     return (
       <View style={styles.center}>
-        <Stack.Screen
-          options={{
-            title: isEditing ? 'Edit entry' : 'Log time',
-            headerBackTitle: '',
-            headerBackButtonDisplayMode: 'minimal',
-            headerRight: () => <HeaderHomeButton />,
-          }}
-        />
+        <Stack.Screen options={loadingScreenOptions} />
         <ActivityIndicator color={colors.accent} />
       </View>
     );
@@ -516,14 +537,7 @@ export default function HoursEntryScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={headerHeight}
     >
-      <Stack.Screen
-        options={{
-          title: headerTitle,
-          headerBackTitle: '',
-          headerBackButtonDisplayMode: 'minimal',
-          headerRight: () => <HeaderHomeButton />,
-        }}
-      />
+      <Stack.Screen options={mainScreenOptions} />
 
       <View style={styles.daySelectorWrap}>
         <WeekBar

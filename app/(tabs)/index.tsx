@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   RefreshControl,
@@ -37,7 +36,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useReminderStore } from '../../store/useReminderStore';
-import { runInitialSync } from '../../services/sync/initialSync';
+import { useSyncStore } from '../../store/useSyncStore';
 import {
   getEntryLockReason,
   isEntryEditable,
@@ -90,11 +89,9 @@ export default function HomeScreen() {
   const showToast = useToastStore((s) => s.show);
   const online = useOnline();
 
-  const [bootstrapped, setBootstrapped] = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(true);
-  const [isSyncingFresh, setIsSyncingFresh] = useState(false);
   const [isSubmittingWeek, setIsSubmittingWeek] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
+  const isSyncing = useSyncStore((s) => s.isSyncing);
   // 90-day entry window for the picker sort. Loaded once on bootstrap and
   // refreshed whenever the user navigates back to the home screen so a
   // brand-new entry shifts that project to the top of tier 1 immediately.
@@ -107,60 +104,34 @@ export default function HomeScreen() {
     await loadWeek(user.id, toIsoDay(monday), toIsoDay(sunday));
   }, [user?.id, loadWeek, monday, sunday]);
 
+  // Minimal bootstrap. Hydrates the project + entry stores from SQLite when
+  // user identity becomes known (cold launch with stored tokens, post-login,
+  // or a re-login under a different account). The actual BQE sync is owned by
+  // app/_layout.tsx's post-auth effect via useSyncStore.runSync — home is now
+  // a pure store consumer.
+  //
+  // Deps intentionally narrowed to [user?.id]: refreshWeek's identity changes
+  // when monday/sunday change (i.e., every week navigation), but week-driven
+  // refreshes are handled by the dedicated effect below. Including refreshWeek
+  // here would re-fire refreshProjects on every week swipe — wasted SQLite
+  // work. Both refreshProjects and refreshWeek are stable for the lifetime of
+  // a single user identity, so closure capture is safe.
   useEffect(() => {
-    if (!user?.id || bootstrapped) return;
-    let cancelled = false;
-    (async () => {
-      const t0 = Date.now();
-      if (__DEV__) console.log('[jot:home] bootstrap START');
-      setIsBootstrapping(true);
-      try {
-        await refreshProjects();
-        if (__DEV__) {
-          console.log(
-            `[jot:home] post-refresh project count = ${useProjectStore.getState().flatProjects.length}`,
-          );
-        }
-        if (useProjectStore.getState().flatProjects.length === 0) {
-          if (__DEV__) console.log('[jot:home] cache empty — running initialSync');
-          setIsSyncingFresh(true);
-          try {
-            await runInitialSync();
-          } finally {
-            setIsSyncingFresh(false);
-          }
-          await refreshProjects();
-        }
-        await refreshWeek();
-      } catch (e) {
-        if (__DEV__) console.log('[jot:home] bootstrap FAILED:', e);
-      } finally {
-        if (!cancelled) {
-          setIsBootstrapping(false);
-          setBootstrapped(true);
-          if (__DEV__) {
-            console.log(`[jot:home] bootstrap COMPLETE in ${Date.now() - t0}ms`);
-          }
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id, bootstrapped, refreshProjects, refreshWeek]);
+    if (!user?.id) return;
+    refreshProjects();
+    refreshWeek();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   useFocusEffect(
     useCallback(() => {
-      if (bootstrapped) {
-        refreshWeek();
-      }
-    }, [bootstrapped, refreshWeek]),
+      refreshWeek();
+    }, [refreshWeek]),
   );
 
   useEffect(() => {
-    if (!bootstrapped) return;
     refreshWeek();
-  }, [bootstrapped, weekOffset, refreshWeek]);
+  }, [weekOffset, refreshWeek]);
 
   useEffect(() => {
     setShowAllProjects(false);
@@ -310,10 +281,16 @@ export default function HomeScreen() {
             setIsSubmittingWeek(true);
             const result = await submitWeek(user.id, toIsoDay(monday), toIsoDay(sunday));
             setIsSubmittingWeek(false);
-            if (result.ok) {
+            if (!result.ok) {
+              showToast(`Couldn't submit: ${result.error}`, 'error');
+            } else if (result.failedCount === 0) {
               showToast('Week submitted!', 'success');
             } else {
-              showToast(`Couldn't submit: ${result.error}`, 'error');
+              const total = result.count + result.failedCount;
+              showToast(
+                `Submitted ${result.count} of ${total} entries. ${result.failedCount} couldn't submit.`,
+                'error',
+              );
             }
           },
         },
@@ -387,7 +364,7 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scroll}
         refreshControl={
           <RefreshControl
-            refreshing={isLoadingEntries && bootstrapped}
+            refreshing={isLoadingEntries}
             onRefresh={refreshWeek}
             tintColor={colors.accent}
           />
@@ -455,17 +432,19 @@ export default function HomeScreen() {
         <View style={styles.projects}>
           <Text style={styles.sectionHeader}>Recent projects</Text>
 
-          {isBootstrapping ? (
-            <View style={styles.spinner}>
-              <ActivityIndicator color={colors.accent} />
-              {isSyncingFresh ? <Text style={styles.spinnerNote}>Syncing with BQE Core…</Text> : null}
-            </View>
-          ) : tree.length === 0 ? (
-            <EmptyState
-              icon="briefcase-outline"
-              title="No active projects found"
-              subtitle="Make sure you're assigned to projects in BQE Core."
-            />
+          {flatProjects.length === 0 ? (
+            isSyncing ? (
+              <EmptyState
+                icon="cloud-download-outline"
+                title="Syncing your projects…"
+              />
+            ) : (
+              <EmptyState
+                icon="briefcase-outline"
+                title="No projects yet."
+                subtitle="Your projects will appear here once they're loaded."
+              />
+            )
           ) : noRecentActivity ? (
             // Honest empty state: don't fake a list out of the alphabetical
             // first N projects. The + FAB is the route to the full picker.
@@ -486,7 +465,9 @@ export default function HomeScreen() {
                   phaseLabel={phaseLabelByParent.get(node.project.id) ?? null}
                   hours={hoursByParent.get(node.project.id) ?? 0}
                   color={node.project.color ?? colors.accent}
-                  onPress={() => router.push(`/entry/${node.project.id}`)}
+                  onPress={() => {
+                    router.push(`/entry/${node.project.id}`);
+                  }}
                 />
               ))}
               {showMoreToggle ? (
@@ -513,70 +494,67 @@ export default function HomeScreen() {
 
           {/* Persistent CTA — visible whether the user has 0 entries or a
               full week logged. Unconditional so users always have a clear
-              path to the picker without hunting for the FAB. Uses the same
-              styling as the prior empty-state-only button. */}
-          {!isBootstrapping ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Log your time"
-              onPress={() => router.push('/entry/picker')}
-              style={({ pressed }) => [
-                styles.firstEntryBtn,
-                pressed && styles.firstEntryBtnPressed,
-              ]}
-            >
-              <Text style={styles.firstEntryBtnText}>Log your time</Text>
-            </Pressable>
-          ) : null}
+              path to the picker without hunting for the FAB. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Log your time"
+            onPress={() => {
+              router.push('/entry/picker');
+            }}
+            style={({ pressed }) => [
+              styles.firstEntryBtn,
+              pressed && styles.firstEntryBtnPressed,
+            ]}
+          >
+            <Text style={styles.firstEntryBtnText}>Log your time</Text>
+          </Pressable>
         </View>
 
-        {!isBootstrapping ? (
-          <View style={styles.entries}>
-            <View style={styles.entriesHeaderRow}>
-              <Text style={styles.sectionHeader}>{entriesHeading(selectedDate, today)}</Text>
-              {dayEntries.length > 0 ? (
-                <Text style={styles.entriesCount}>
-                  {dayEntries.length} entr{dayEntries.length === 1 ? 'y' : 'ies'}
-                </Text>
-              ) : null}
-            </View>
-
-            {dayEntries.length === 0 ? (
-              <EmptyState
-                icon="time-outline"
-                title="No entries yet for this day"
-                subtitle="Tap a project above or use the camera to scan a timesheet."
-              />
-            ) : (
-              <View style={styles.entryList}>
-                {dayEntries.map((entry) => {
-                  const phase = projectsById.get(entry.projectId);
-                  const parent = phase?.parentId
-                    ? projectsById.get(phase.parentId)
-                    : phase;
-                  return (
-                    <EntryRow
-                      key={entry.id}
-                      projectName={parent?.name ?? phase?.name ?? '(unknown)'}
-                      phaseLabel={phase?.phaseCode ?? null}
-                      hours={entry.hours}
-                      memo={entry.memo}
-                      color={parent?.color ?? colors.accent}
-                      locked={!isEntryEditable(entry)}
-                      pending={entry.syncStatus === 'pending'}
-                      failed={entry.syncStatus === 'failed'}
-                      submissionStatus={entry.submissionStatus}
-                      onPress={() => handleEntryPress(entry)}
-                      onDelete={() => handleEntryDelete(entry)}
-                    />
-                  );
-                })}
-              </View>
-            )}
+        <View style={styles.entries}>
+          <View style={styles.entriesHeaderRow}>
+            <Text style={styles.sectionHeader}>{entriesHeading(selectedDate, today)}</Text>
+            {dayEntries.length > 0 ? (
+              <Text style={styles.entriesCount}>
+                {dayEntries.length} entr{dayEntries.length === 1 ? 'y' : 'ies'}
+              </Text>
+            ) : null}
           </View>
-        ) : null}
 
-        {!isBootstrapping && weekEntries.length > 0 ? (
+          {dayEntries.length === 0 ? (
+            <EmptyState
+              icon="time-outline"
+              title="No entries yet for this day"
+              subtitle="Tap a project above or use the camera to scan a timesheet."
+            />
+          ) : (
+            <View style={styles.entryList}>
+              {dayEntries.map((entry) => {
+                const phase = projectsById.get(entry.projectId);
+                const parent = phase?.parentId
+                  ? projectsById.get(phase.parentId)
+                  : phase;
+                return (
+                  <EntryRow
+                    key={entry.id}
+                    projectName={parent?.name ?? phase?.name ?? '(unknown)'}
+                    phaseLabel={phase?.phaseCode ?? null}
+                    hours={entry.hours}
+                    memo={entry.memo}
+                    color={parent?.color ?? colors.accent}
+                    locked={!isEntryEditable(entry)}
+                    pending={entry.syncStatus === 'pending'}
+                    failed={entry.syncStatus === 'failed'}
+                    submissionStatus={entry.submissionStatus}
+                    onPress={() => handleEntryPress(entry)}
+                    onDelete={() => handleEntryDelete(entry)}
+                  />
+                );
+              })}
+            </View>
+          )}
+        </View>
+
+        {weekEntries.length > 0 ? (
           <View style={styles.submitWrap}>
             <SubmitWeekCard
               draftHours={draftHours}
@@ -593,7 +571,9 @@ export default function HomeScreen() {
         icon="add"
         label="Log time"
         accessibilityLabel="Log time on a new project"
-        onPress={() => router.push('/entry/picker')}
+        onPress={() => {
+          router.push('/entry/picker');
+        }}
       />
     </SafeAreaView>
   );
@@ -859,15 +839,6 @@ const styles = StyleSheet.create({
   submitWrap: {
     marginTop: 24,
     paddingHorizontal: 16,
-  },
-  spinner: {
-    paddingVertical: 32,
-    alignItems: 'center',
-    gap: 8,
-  },
-  spinnerNote: {
-    fontSize: 13,
-    color: colors.textSecondary,
   },
   error: {
     fontSize: 13,

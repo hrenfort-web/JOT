@@ -20,12 +20,14 @@ import {
   resetEntryToPending,
   submitEntriesToWorkflow,
   updateEntry as bqeUpdateEntry,
+  type WorkflowSubmitEntry,
 } from '../services/bqe/timeentry';
 import { toIsoDay } from '../services/bqe/utils';
 import { isOnline } from '../services/sync/connectivity';
 import { processQueue } from '../services/sync/queue';
 import { rescheduleAllReminders } from '../services/notifications/reminders';
 import { extractBqeErrorMessage } from '../services/errors';
+import { applySourceTag } from '../utils/sourceTag';
 import { useAuthStore } from './useAuthStore';
 import { run } from '../db/database';
 import type { EntrySource, LocalTimeEntry } from '../db/schema';
@@ -174,7 +176,15 @@ interface EntryState {
     resourceId: string,
     weekStart: string,
     weekEnd: string,
-  ) => Promise<{ ok: true; count: number } | { ok: false; count: number; error: string }>;
+  ) => Promise<
+    | {
+        ok: true;
+        count: number;
+        failedCount: number;
+        errors: Array<{ bqeId: string; error: string }>;
+      }
+    | { ok: false; count: 0; error: string }
+  >;
 }
 
 export const useEntryStore = create<EntryState>((set, get) => ({
@@ -272,6 +282,9 @@ export const useEntryStore = create<EntryState>((set, get) => ({
     }
 
     try {
+      // Source tag goes in `description` only — memo is reserved for user
+      // content per Quality Floor. See utils/sourceTag for format + rationale.
+      const source = input.source ?? 'manual';
       const created = await createEntry({
         projectId: input.projectId,
         activityId: input.activityId,
@@ -279,7 +292,7 @@ export const useEntryStore = create<EntryState>((set, get) => ({
         date: input.date,
         actualHours: input.hours,
         billable: input.isBillable,
-        description: input.memo ?? '',
+        description: applySourceTag(input.memo ?? '', source),
         memo: input.memo ?? '',
       });
       await markEntrySyncedWithBqeId(
@@ -363,16 +376,25 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       };
     }
 
-    const payloads: CreateTimeEntryPayload[] = inputs.map((p) => ({
-      projectId: p.projectId,
-      activityId: p.activityId,
-      resourceId: p.resourceId,
-      date: p.date,
-      actualHours: p.hours,
-      billable: p.isBillable,
-      description: p.memo ?? '',
-      memo: p.memo ?? '',
-    }));
+    // Per-entry payload with source tag applied to `description` only.
+    // The same payload array feeds BOTH the /timeentry/batch fast path
+    // AND the per-entry fallback loop below — tagging once at this
+    // construction site covers both. Default source 'scanned' matches
+    // the local-insert default at the top of this function (review.tsx
+    // always passes source: 'scanned'; default is belt-and-suspenders).
+    const payloads: CreateTimeEntryPayload[] = inputs.map((p) => {
+      const source = p.source ?? 'scanned';
+      return {
+        projectId: p.projectId,
+        activityId: p.activityId,
+        resourceId: p.resourceId,
+        date: p.date,
+        actualHours: p.hours,
+        billable: p.isBillable,
+        description: applySourceTag(p.memo ?? '', source),
+        memo: p.memo ?? '',
+      };
+    });
 
     // Fast path: try the batch endpoint. BQE's /timeentry/batch is
     // all-or-nothing — one bad entry rolls back the whole call and
@@ -494,45 +516,92 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   },
 
   saveEntryEdits: async (id, patch) => {
-    const existing = get().weekEntries.find((e) => e.id === id) ?? (await loadEntryById(id));
-    if (!existing) {
-      return { ok: false as const, error: 'Entry not found' };
-    }
-    await patchLocalEntry(id, patch);
-    if (inDemoMode()) {
-      await markDemoSynced(id);
-      await get().refreshLocal();
-      return { ok: true as const };
-    }
-    if (!existing.bqeId) {
-      await get().refreshLocal();
-      return { ok: true as const };
-    }
+    // Outer try/catch is pure observability — catches any runtime error
+    // BEFORE the BQE call (loadEntryById, patchLocalEntry, applySourceTag,
+    // payload construction) and logs it with a stack before re-throwing.
+    // BQE-call errors are caught by the inner try/catch below and return
+    // a structured `{ ok: false }`, so they don't reach this catch.
     try {
-      const updated = await bqeUpdateEntry(
-        existing.bqeId,
-        {
+      console.log(
+        `[jot:saveEdits] START entryId=${id} patch=${JSON.stringify(patch)}`,
+      );
+      const existing =
+        get().weekEntries.find((e) => e.id === id) ?? (await loadEntryById(id));
+      if (!existing) {
+        console.log(`[jot:saveEdits] FATAL no existing entry for entryId=${id}`);
+        return { ok: false as const, error: 'Entry not found' };
+      }
+      console.log(
+        `[jot:saveEdits] existing loaded projectId=${existing.projectId} activityId=${existing.activityId} resourceId=${existing.resourceId} version=${existing.version} source=${existing.source}`,
+      );
+      await patchLocalEntry(id, patch);
+      if (inDemoMode()) {
+        await markDemoSynced(id);
+        await get().refreshLocal();
+        return { ok: true as const };
+      }
+      if (!existing.bqeId) {
+        await get().refreshLocal();
+        return { ok: true as const };
+      }
+      try {
+        // Re-apply the source tag on every edit using the entry's ORIGINAL
+        // source (from `existing.source`). Two important properties:
+        //   - The tag survives repeated edits — applySourceTag is idempotent
+        //     for the same source, so create → edit → re-edit doesn't
+        //     accumulate or strip the tag.
+        //   - The source itself never changes on edit. A scan entry stays
+        //     '#js' forever even if the user rewrites the memo entirely.
+        // Description is only included in the update body when the memo is
+        // actually being patched; an undefined patch.memo leaves description
+        // untouched on BQE so we don't gratuitously overwrite the field.
+        const description =
+          patch.memo !== undefined
+            ? applySourceTag(patch.memo ?? '', existing.source)
+            : undefined;
+        // BQE's PUT /timeentry/{id} requires the identity fields
+        // (projectId, activityId, resourceId) on every update, even when
+        // they aren't changing. Without them the call returns
+        // 409 RequiredFieldMissing (ErrorCode 000.020). The edit screen
+        // never lets the user reassign an entry's project/activity/
+        // resource, so passing the original values from `existing` is both
+        // correct and stable across the edit lifecycle.
+        const payload = {
+          projectId: existing.projectId,
+          activityId: existing.activityId,
+          resourceId: existing.resourceId,
           actualHours: patch.hours,
           memo: patch.memo ?? undefined,
-          description: patch.memo ?? undefined,
+          description,
           billable: patch.isBillable,
           date: patch.date,
-        },
-        existing.version,
-      );
-      await markEntryVersion(
-        id,
-        updated.version != null ? String(updated.version) : null,
-        updated.billStatus ?? null,
-      );
-      await get().refreshLocal();
-      return { ok: true as const };
-    } catch (e) {
-      await get().refreshLocal();
-      return {
-        ok: false as const,
-        error: e instanceof Error ? e.message : 'Failed to update entry',
-      };
+        };
+        console.log(`[jot:saveEdits] payload=${JSON.stringify(payload)}`);
+        console.log('[jot:saveEdits] calling bqeUpdateEntry');
+        const updated = await bqeUpdateEntry(existing.bqeId, payload, existing.version);
+        console.log(
+          `[jot:saveEdits] update success, new version=${updated.version}`,
+        );
+        await markEntryVersion(
+          id,
+          updated.version != null ? String(updated.version) : null,
+          updated.billStatus ?? null,
+        );
+        await get().refreshLocal();
+        return { ok: true as const };
+      } catch (e) {
+        await get().refreshLocal();
+        return {
+          ok: false as const,
+          error: e instanceof Error ? e.message : 'Failed to update entry',
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error && err.stack ? err.stack : '(no stack)';
+      console.log(`[jot:saveEdits] FAILED entryId=${id}: ${msg}`);
+      console.log(stack);
+      throw err;
     }
   },
 
@@ -573,27 +642,132 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   },
 
   submitWeek: async (resourceId, weekStart, weekEnd) => {
+    console.log(
+      `[jot:submit-week] submitWeek START resourceId=${resourceId} weekStart=${weekStart} weekEnd=${weekEnd}`,
+    );
     const drafts = await loadDraftSyncedEntries(resourceId, weekStart, weekEnd);
+    console.log(
+      `[jot:submit-week] loadDraftSyncedEntries returned count=${drafts.length} drafts=${JSON.stringify(
+        drafts.map((d) => ({
+          id: d.id,
+          bqeId: d.bqeId,
+          submissionStatus: d.submissionStatus,
+          syncStatus: d.syncStatus,
+          version: d.version,
+          hours: d.hours,
+          date: d.date,
+        })),
+      )}`,
+    );
     if (drafts.length === 0) {
-      return { ok: true as const, count: 0 };
+      console.log('[jot:submit-week] submitWeek END count=0 (no drafts)');
+      return { ok: true as const, count: 0, failedCount: 0, errors: [] };
     }
-    const localIds = drafts.map((e) => e.id);
-    const bqeIds = drafts.map((e) => e.bqeId).filter((v): v is string => !!v);
 
-    if (!inDemoMode()) {
-      try {
-        await submitEntriesToWorkflow(bqeIds);
-      } catch (e) {
-        return {
-          ok: false as const,
-          count: 0,
-          error: e instanceof Error ? e.message : 'Failed to submit week',
-        };
+    // Build the workflow-submit payloads. Mirror updateEntry's body shape
+    // by including identity + version + (conditionally) memo/description.
+    // description is re-derived from memo + source via applySourceTag so
+    // the source tag round-trips correctly through the PUT.
+    //
+    // Two hard filters: bqeId must be present (we have nothing to submit
+    // without it) AND version must be non-null. Workflow PUTs without
+    // version bypass BQE's OutDatedModel concurrency check — the same
+    // failure mode we just fixed — and a missing version on a synced entry
+    // is a sync bug we want visible, not silently bypassed. Synced
+    // entries should always carry a version from persistFetchedEntries /
+    // markEntryVersion; if one shows up null here, the warning logs the
+    // entry id for follow-up.
+    const submitPayloads: WorkflowSubmitEntry[] = [];
+    const droppedNoBqeId: number[] = [];
+    const droppedNoVersion: Array<{ localId: number; bqeId: string }> = [];
+    for (const e of drafts) {
+      if (e.bqeId === null) {
+        droppedNoBqeId.push(e.id);
+        continue;
       }
+      if (e.version === null) {
+        droppedNoVersion.push({ localId: e.id, bqeId: e.bqeId });
+        console.log(
+          `[jot:submit-week] WARN skipping localId=${e.id} bqeId=${e.bqeId} (missing version — sync bug)`,
+        );
+        continue;
+      }
+      submitPayloads.push({
+        bqeId: e.bqeId,
+        projectId: e.projectId,
+        activityId: e.activityId,
+        resourceId: e.resourceId,
+        date: e.date,
+        hours: e.hours,
+        isBillable: e.isBillable,
+        memo: e.memo,
+        description: e.memo !== null ? applySourceTag(e.memo, e.source) : null,
+        version: e.version,
+      });
+    }
+    console.log(
+      `[jot:submit-week] id extraction draftsTotal=${drafts.length} submittable=${submitPayloads.length} droppedNoBqeId=${JSON.stringify(droppedNoBqeId)} droppedNoVersion=${JSON.stringify(droppedNoVersion)}`,
+    );
+
+    if (submitPayloads.length === 0) {
+      const error = 'No submittable entries (missing version data).';
+      console.log(`[jot:submit-week] submitWeek FAILED error=${error}`);
+      return { ok: false as const, count: 0, error };
     }
 
-    await markEntriesSubmissionStatus(localIds, 'submitted');
+    let succeeded: string[] = [];
+    let failed: Array<{ bqeId: string; error: string }> = [];
+    if (!inDemoMode()) {
+      const result = await submitEntriesToWorkflow(submitPayloads);
+      succeeded = result.succeeded;
+      failed = result.failed;
+    } else {
+      console.log(
+        '[jot:submit-week] demo mode — skipping submitEntriesToWorkflow network call (treating all submittable as succeeded)',
+      );
+      succeeded = submitPayloads.map((p) => p.bqeId);
+    }
+
+    // Map succeeded bqeIds back to localIds so markEntriesSubmissionStatus
+    // only touches entries that BQE actually accepted. Building a
+    // bqeId → localId map up front rather than .find()-ing per success
+    // keeps this O(N) instead of O(N²) on large weeks.
+    const localIdByBqeId = new Map<string, number>();
+    for (const d of drafts) {
+      if (d.bqeId !== null) localIdByBqeId.set(d.bqeId, d.id);
+    }
+    const succeededLocalIds: number[] = [];
+    for (const bqeId of succeeded) {
+      const localId = localIdByBqeId.get(bqeId);
+      if (localId !== undefined) succeededLocalIds.push(localId);
+    }
+
+    if (succeededLocalIds.length > 0) {
+      await markEntriesSubmissionStatus(succeededLocalIds, 'submitted');
+    }
+    console.log(
+      `[jot:submit-week] markEntriesSubmissionStatus wrote submitted for localIds=${JSON.stringify(succeededLocalIds)}`,
+    );
     await get().refreshLocal();
-    return { ok: true as const, count: localIds.length };
+
+    if (succeeded.length === 0) {
+      // Full failure — return ok:false with the first failure message as
+      // the surface error. The full list is preserved in the logs.
+      const firstError = failed[0]?.error ?? 'All entries failed to submit';
+      console.log(
+        `[jot:submit-week] submitWeek END status=full-failure count=0 failedCount=${failed.length}`,
+      );
+      return { ok: false as const, count: 0, error: firstError };
+    }
+
+    console.log(
+      `[jot:submit-week] submitWeek END count=${succeeded.length} failedCount=${failed.length}`,
+    );
+    return {
+      ok: true as const,
+      count: succeeded.length,
+      failedCount: failed.length,
+      errors: failed,
+    };
   },
 }));

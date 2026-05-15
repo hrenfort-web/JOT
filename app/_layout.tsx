@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { ActivityIndicator, AppState, StyleSheet, useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter, useSegments } from 'expo-router';
@@ -27,6 +27,7 @@ import {
   rescheduleAllReminders,
 } from '../services/notifications/reminders';
 import { useReminderStore } from '../store/useReminderStore';
+import { useSyncStore } from '../store/useSyncStore';
 import { installLogCapture } from '../utils/logBuffer';
 import { prewarmBqeConnection } from '../services/bqe/prewarm';
 
@@ -54,6 +55,66 @@ installLogCapture();
 
 configureNotificationHandler();
 
+// ─── Hoisted navigator + screen options ──────────────────────────────
+// Hypothesis: expo-router was rebuilding navigation state at sync
+// completion because RootLayout's inline `<Stack screenOptions={{...}}>`
+// and `<Stack.Screen options={{...}}>` JSX produced fresh object
+// references on every render. When useSegments ticks a re-render of
+// RootLayout, the Stack receives "new" options and may pop the active
+// pushed screen. Lifting these to module-scope constants gives every
+// re-render of RootLayout the SAME identity-stable references to pass
+// down, eliminating the reference-churn trigger.
+
+const STACK_SCREEN_OPTIONS = {
+  headerStyle: { backgroundColor: colors.background },
+  headerTintColor: colors.text,
+  headerTitleStyle: { fontWeight: '600' as const },
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+  contentStyle: { backgroundColor: colors.background },
+};
+
+const SCREEN_OPTIONS_TABS = {
+  headerShown: false,
+  title: '',
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+};
+
+const SCREEN_OPTIONS_ENTRY_PICKER = {
+  title: 'Pick a project',
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+};
+
+const SCREEN_OPTIONS_ENTRY_PROJECT_ID = {
+  title: 'Select phase',
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+};
+
+const SCREEN_OPTIONS_ENTRY_HOURS = {
+  title: 'Log hours',
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+};
+
+const SCREEN_OPTIONS_SCAN_PROCESSING = {
+  title: 'Processing',
+  headerBackVisible: false,
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+};
+
+const SCREEN_OPTIONS_SCAN_REVIEW = {
+  title: 'Review entries',
+  headerBackTitle: '',
+  headerBackButtonDisplayMode: 'minimal' as const,
+};
+
+const SCREEN_OPTIONS_AUTH_LOGIN = { headerShown: false, gestureEnabled: false };
+// ─────────────────────────────────────────────────────────────────────
+
 function useProtectedRoute() {
   const segments = useSegments();
   const router = useRouter();
@@ -77,6 +138,7 @@ export default function RootLayout() {
   const scheme = useColorScheme();
   const isReady = useAuthStore((s) => s.isReady);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const demoMode = useAuthStore((s) => s.demoMode);
   const loadStoredTokens = useAuthStore((s) => s.loadStoredTokens);
   const loadReminderState = useReminderStore((s) => s.load);
 
@@ -277,11 +339,77 @@ export default function RootLayout() {
     };
   }, [isAuthenticated, loadReminderState, router]);
 
+  // Post-auth sync trigger. Replaces the cache-empty branch in HomeScreen's
+  // bootstrap useEffect (gone in Commit 2 of the Path A refactor). Fires
+  // whenever (isReady && isAuthenticated && !demoMode) becomes true — so on
+  // cold launch with stored tokens AND immediately after a fresh login. The
+  // sync store's single-flight gate (returns the existing in-flight promise
+  // on re-entry) prevents the brief overlap with login()'s direct
+  // runInitialSync call from doubling work; that direct call is removed in
+  // Commit 3 and the bounded-duplication window closes.
+  //
+  // Fire-and-forget. Errors land in useSyncStore.lastError; the home screen
+  // shows them via its existing error rendering path.
+  useEffect(() => {
+    if (!isReady) return;
+    if (!isAuthenticated) return;
+    if (demoMode) return;
+    useSyncStore.getState().runSync('cold-launch');
+  }, [isReady, isAuthenticated, demoMode]);
+
   // Combined readiness: both fonts AND auth state must be hydrated before
   // we let the route tree mount. If fonts fail to load (fontError set),
   // we still proceed — a fallback system font is preferable to a hung
   // splash screen.
   const ready = isReady && (fontsLoaded || !!fontError);
+
+  // Stack children — memoized array of <Stack.Screen> elements. The
+  // earlier shape wrapped the screens in a React.Fragment, which
+  // expo-router's <Stack> layout walker treats as a single non-Screen
+  // child (firing the "Layout children must be of type Screen" warn
+  // on every render) and tearing down the route registry whenever
+  // the children prop ref changed — which was every render. The
+  // memoized array with empty deps gives expo-router (a) only valid
+  // Stack.Screen elements as direct children and (b) a stable
+  // reference across renders so reconciliation matches by key
+  // instead of rebuilding. The bounce-on-sync-completion remount of
+  // (tabs) is the symptom this addresses.
+  const stackChildren = useMemo(
+    () => [
+      <Stack.Screen key="tabs" name="(tabs)" options={SCREEN_OPTIONS_TABS} />,
+      <Stack.Screen
+        key="entry/picker"
+        name="entry/picker"
+        options={SCREEN_OPTIONS_ENTRY_PICKER}
+      />,
+      <Stack.Screen
+        key="entry/[projectId]"
+        name="entry/[projectId]"
+        options={SCREEN_OPTIONS_ENTRY_PROJECT_ID}
+      />,
+      <Stack.Screen
+        key="entry/hours"
+        name="entry/hours"
+        options={SCREEN_OPTIONS_ENTRY_HOURS}
+      />,
+      <Stack.Screen
+        key="scan/processing"
+        name="scan/processing"
+        options={SCREEN_OPTIONS_SCAN_PROCESSING}
+      />,
+      <Stack.Screen
+        key="scan/review"
+        name="scan/review"
+        options={SCREEN_OPTIONS_SCAN_REVIEW}
+      />,
+      <Stack.Screen
+        key="auth/login"
+        name="auth/login"
+        options={SCREEN_OPTIONS_AUTH_LOGIN}
+      />,
+    ],
+    [],
+  );
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -292,70 +420,8 @@ export default function RootLayout() {
           <ActivityIndicator color={colors.accent} />
         </View>
       ) : (
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.background },
-            headerTintColor: colors.text,
-            headerTitleStyle: { fontWeight: '600' },
-            headerBackTitle: '',
-            headerBackButtonDisplayMode: 'minimal',
-            contentStyle: { backgroundColor: colors.background },
-          }}
-        >
-          <Stack.Screen
-            name="(tabs)"
-            options={{
-              headerShown: false,
-              title: '',
-              headerBackTitle: '',
-              headerBackButtonDisplayMode: 'minimal',
-            }}
-          />
-          <Stack.Screen
-            name="entry/picker"
-            options={{
-              title: 'Pick a project',
-              headerBackTitle: '',
-              headerBackButtonDisplayMode: 'minimal',
-            }}
-          />
-          <Stack.Screen
-            name="entry/[projectId]"
-            options={{
-              title: 'Select phase',
-              headerBackTitle: '',
-              headerBackButtonDisplayMode: 'minimal',
-            }}
-          />
-          <Stack.Screen
-            name="entry/hours"
-            options={{
-              title: 'Log hours',
-              headerBackTitle: '',
-              headerBackButtonDisplayMode: 'minimal',
-            }}
-          />
-          <Stack.Screen
-            name="scan/processing"
-            options={{
-              title: 'Processing',
-              headerBackVisible: false,
-              headerBackTitle: '',
-              headerBackButtonDisplayMode: 'minimal',
-            }}
-          />
-          <Stack.Screen
-            name="scan/review"
-            options={{
-              title: 'Review entries',
-              headerBackTitle: '',
-              headerBackButtonDisplayMode: 'minimal',
-            }}
-          />
-          <Stack.Screen
-            name="auth/login"
-            options={{ headerShown: false, gestureEnabled: false }}
-          />
+        <Stack screenOptions={STACK_SCREEN_OPTIONS}>
+          {stackChildren}
         </Stack>
       )}
       </ErrorBoundary>

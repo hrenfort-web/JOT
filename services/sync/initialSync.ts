@@ -27,7 +27,7 @@ export type ProgressCallback = (progress: SyncProgress) => void;
 
 interface SyncStep {
   label: string;
-  run: () => Promise<number>;
+  run: (isStale?: () => boolean) => Promise<number>;
 }
 
 const STEPS: SyncStep[] = [
@@ -36,11 +36,19 @@ const STEPS: SyncStep[] = [
   { label: 'Loading team', run: fetchAndSaveEmployees },
 ];
 
-export async function runInitialSync(onProgress?: ProgressCallback): Promise<void> {
+export async function runInitialSync(
+  onProgress?: ProgressCallback,
+  isStale?: () => boolean,
+): Promise<void> {
   if (useAuthStore.getState().demoMode) {
-    await setLastSyncTime(new Date());
+    // No-op short-circuit for demo mode — there's nothing to fetch from
+    // BQE when the store is seeded locally. Persistence of lastSyncAt is
+    // owned by useSyncStore.runSync's IIFE finally, which runs after this
+    // returns and writes the timestamp (gated by isStale, so a logout
+    // mid-sync correctly suppresses the bump).
     return;
   }
+  if (isStale?.()) return;
   const t0 = Date.now();
   if (__DEV__) console.log('[jot:sync] runInitialSync START');
 
@@ -59,7 +67,7 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
   for (const step of STEPS) {
     const stepStart = Date.now();
     try {
-      const count = await step.run();
+      const count = await step.run(isStale);
       if (__DEV__) {
         console.log(
           `[jot:sync] ${step.label}: ${count} rows in ${Date.now() - stepStart}ms`,
@@ -75,6 +83,8 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
   }
 
   if (__DEV__) console.log(`[jot:sync] BQE fetches done in ${Date.now() - t0}ms`);
+
+  if (isStale?.()) return;
 
   // Note: the legacy /projectassignment + LocalProject.groupId sync was
   // removed. Studio G's tenant doesn't populate /projectassignment (404
@@ -95,7 +105,10 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
   // Background step: kick off a non-awaited sweep of every active project
   // in the tenant. Studio G has 3,200+ projects; at 5 concurrent and ~150ms
   // per call that completes in ~90s. Failures are logged and skipped.
-  await runActivityGroupPhase();
+  if (isStale?.()) return;
+  await runActivityGroupPhase(isStale);
+
+  if (isStale?.()) return;
 
   // Pull the freshly-saved rows out of SQLite into the in-memory stores so
   // screens that subscribe (home, picker, settings) render immediately when
@@ -115,6 +128,8 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
     if (__DEV__) console.log('[jot:sync] project store refresh FAILED:', e);
   }
 
+  if (isStale?.()) return;
+
   try {
     const refreshStart = Date.now();
     await useEntryStore.getState().refreshLocal();
@@ -127,7 +142,10 @@ export async function runInitialSync(onProgress?: ProgressCallback): Promise<voi
     if (__DEV__) console.log('[jot:sync] entry store refresh FAILED:', e);
   }
 
-  await setLastSyncTime(new Date());
+  // Persistence of lastSyncAt is owned end-to-end by useSyncStore.runSync's
+  // IIFE finally — it both writes setLastSyncTime and updates the in-memory
+  // zustand state, gated by isStale so a logout mid-sync correctly
+  // suppresses the bump. runInitialSync writes nothing here.
   if (__DEV__) console.log(`[jot:sync] runInitialSync COMPLETE in ${Date.now() - t0}ms`);
 }
 
@@ -154,9 +172,10 @@ const ACTIVE_PROJECT_WINDOW_DAYS = 90;
  * and swallowed — the resolver's firm-wide fallback prevents data loss
  * even when this whole phase no-ops.
  */
-async function runActivityGroupPhase(): Promise<void> {
+async function runActivityGroupPhase(isStale?: () => boolean): Promise<void> {
   console.warn('[jot:sync] activity-group phase START');
   try {
+    if (isStale?.()) return;
     const eagerProjectIds = await collectRecentProjectIds();
     if (eagerProjectIds.length === 0) {
       console.warn(
@@ -165,10 +184,12 @@ async function runActivityGroupPhase(): Promise<void> {
     } else {
       const eagerStart = Date.now();
       const bindings = await fetchMultipleProjectActivityGroups(eagerProjectIds);
-      await saveProjectActivityGroups(bindings);
+      if (isStale?.()) return;
+      await saveProjectActivityGroups(bindings, isStale);
       const groupIds = uniqueGroupIdsFromBindings(bindings);
       if (groupIds.length > 0) {
-        await fetchAndSaveGroupDetails(groupIds);
+        if (isStale?.()) return;
+        await fetchAndSaveGroupDetails(groupIds, isStale);
       }
       console.warn(
         `[jot:sync] activity-group eager warm-up END — ${eagerProjectIds.length} projects, ${groupIds.length} groups, ${Date.now() - eagerStart}ms`,
@@ -184,7 +205,7 @@ async function runActivityGroupPhase(): Promise<void> {
   // Background full sync — fire and forget. Errors inside the background
   // task are caught by the task itself; the .catch here is belt-and-braces
   // in case the function throws synchronously before its first await.
-  syncAllActivityGroupsInBackground().catch((e) => {
+  syncAllActivityGroupsInBackground(isStale).catch((e) => {
     console.warn(
       '[jot:sync-bg] kickoff FAILED:',
       e instanceof Error ? e.message : e,
