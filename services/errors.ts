@@ -28,7 +28,7 @@ export function formatError(e: unknown): AppError {
       }
       return {
         code: 'network',
-        userMessage: "Can't reach BQE Core. Your changes will sync when you're back online.",
+        userMessage: "Can't reach the server. Your changes will sync when you're back online.",
       };
     }
     const status = ax.response.status;
@@ -36,16 +36,16 @@ export function formatError(e: unknown): AppError {
       return { code: 'auth', userMessage: 'Your session expired — please log in again.' };
     }
     if (status === 404) {
-      return { code: 'not_found', userMessage: 'BQE could not find that record.' };
+      return { code: 'not_found', userMessage: 'That record was not found.' };
     }
     if (status === 429) {
-      return { code: 'rate_limit', userMessage: "BQE is busy — your changes are queued and will retry shortly." };
+      return { code: 'rate_limit', userMessage: "The server is busy — your changes are queued and will retry shortly." };
     }
     if (status >= 500) {
-      return { code: 'server', userMessage: 'BQE Core had a hiccup. Try again in a moment.' };
+      return { code: 'server', userMessage: 'The server had a hiccup. Try again in a moment.' };
     }
     if (status >= 400) {
-      return { code: 'validation', userMessage: 'BQE rejected this request — please check the details.' };
+      return { code: 'validation', userMessage: 'The server rejected this request — please check the details.' };
     }
   }
   return { code: 'unknown', userMessage: 'Something went wrong. Please try again.' };
@@ -91,9 +91,9 @@ export function extractBqeErrorMessage(e: unknown): string | null {
   // Most common today: `{ message: "...", errorCode: "031.001" }` or
   // `{ error: { message: "..." } }` or just a plain string body.
   const fromBody = pickBqeMessage(data);
-  if (fromBody) return `BQE error: ${fromBody}`;
+  if (fromBody) return `Server error: ${fromBody}`;
 
-  return `BQE error: HTTP ${status}`;
+  return `Server error: HTTP ${status}`;
 }
 
 function pickBqeMessage(data: unknown): string | null {

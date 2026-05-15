@@ -307,7 +307,7 @@ export default function HomeScreen() {
     if (entry.syncStatus === 'failed') {
       Alert.alert(
         'Sync failed',
-        entry.lastError ?? 'BQE rejected this entry.',
+        entry.lastError ?? 'The server rejected this entry.',
         [
           { text: 'Edit', onPress: () => goEdit(entry.id) },
           {
@@ -338,7 +338,7 @@ export default function HomeScreen() {
     const projectName = displayNameForEntry(entry, projectsById);
     Alert.alert(
       `Delete ${formatHours(entry.hours)}h on ${projectName}?`,
-      'This time entry will be removed from BQE Core.',
+      'This time entry will be removed from the server.',
       [
         { text: 'Cancel', style: 'cancel' },
         {

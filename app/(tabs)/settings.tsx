@@ -224,7 +224,7 @@ export default function SettingsScreen() {
 
   const handleDisconnect = () => {
     Alert.alert(
-      'Disconnect from BQE Core?',
+      'Disconnect?',
       'You will need to sign in again to log time.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -326,7 +326,7 @@ export default function SettingsScreen() {
               <View style={styles.rowBody}>
                 <Text style={styles.rowLabel}>Pending entries</Text>
                 <Text style={styles.rowSubtle}>
-                  Will sync when online and BQE accepts them
+                  Will sync when online and the server accepts them
                 </Text>
               </View>
               <View style={styles.pendingPill}>
@@ -489,7 +489,7 @@ export default function SettingsScreen() {
                 );
               })}
               <Text style={styles.memoNote}>
-                Read-only. Admins can edit firm defaults in BQE Core (v2).
+                Read-only. Editing firm defaults will be supported in v2.
               </Text>
             </View>
           ) : null}

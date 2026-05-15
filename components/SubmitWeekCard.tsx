@@ -49,7 +49,7 @@ export function SubmitWeekCard({
         onPress={onSubmit}
         disabled={disabled}
         accessibilityRole="button"
-        accessibilityLabel={`Submit week to BQE — ${draftCount} ${draftCount === 1 ? 'entry' : 'entries'}, ${formatHours(draftHours)} hours`}
+        accessibilityLabel={`Submit week — ${draftCount} ${draftCount === 1 ? 'entry' : 'entries'}, ${formatHours(draftHours)} hours`}
         accessibilityState={{ disabled }}
         style={({ pressed }) => [
           styles.button,
@@ -60,7 +60,7 @@ export function SubmitWeekCard({
         {submitting ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={styles.buttonText}>Submit Week to BQE</Text>
+          <Text style={styles.buttonText}>Submit Week</Text>
         )}
       </Pressable>
 

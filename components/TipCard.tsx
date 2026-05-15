@@ -51,7 +51,7 @@ export function TipCard() {
             <Text style={styles.example}>{EXAMPLE_TEXT}</Text>
           </View>
           <Text style={styles.subtitle}>
-            Project + phase + hours + what you worked on. We'll match to BQE.
+            Project + phase + hours + what you worked on. We'll match it for you.
           </Text>
         </View>
       ) : null}

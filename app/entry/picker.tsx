@@ -137,7 +137,7 @@ export default function PickerScreen() {
         title={tree.length === 0 ? 'No projects yet' : 'No matches'}
         subtitle={
           tree.length === 0
-            ? 'Sync with BQE Core or use Demo Mode to load sample projects.'
+            ? 'Sync now or use Demo Mode to load sample projects.'
             : 'Try a shorter search or check the spelling.'
         }
       />

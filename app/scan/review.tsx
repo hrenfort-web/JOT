@@ -526,7 +526,7 @@ export default function ReviewScreen() {
             >
               {hasFailedEntries
                 ? `Retry failed (${failedCount})`
-                : 'Submit to BQE Core'}
+                : 'Submit'}
             </Text>
           )}
         </Pressable>

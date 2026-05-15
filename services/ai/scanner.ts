@@ -50,7 +50,7 @@ export async function parseTimesheetImage(
     );
   }
   if (projectLookup.length === 0) {
-    throw new Error('No projects available — sync with BQE Core first.');
+    throw new Error('No projects available — sync first.');
   }
 
   const systemPrompt = buildSystemPrompt(projectLookup);

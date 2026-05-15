@@ -502,7 +502,7 @@ export default function HoursEntryScreen() {
         // retry" here would mislead — the retry will hit the same error.
         showToast(result.error, 'error');
       } else {
-        showToast('Saved locally — will retry when BQE is reachable.', 'info');
+        showToast('Saved locally — will retry when the server is reachable.', 'info');
       }
       goHome();
     }

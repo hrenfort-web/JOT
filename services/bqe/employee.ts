@@ -251,7 +251,7 @@ export async function fetchCurrentEmployee(tokens: StoredTokens): Promise<BqeEmp
   }
 
   throw new Error(
-    'Could not resolve current user in /employee. None of the targeted lookups matched and no employee row contains a UUID field equal to userinfo.user_id or id_token.sub. Contact BQE admin to confirm this user has an Employee record.',
+    'Could not resolve current user in /employee. None of the targeted lookups matched and no employee row contains a UUID field equal to userinfo.user_id or id_token.sub. Contact your administrator to confirm this user has an Employee record.',
   );
 }
 

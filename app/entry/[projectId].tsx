@@ -213,7 +213,7 @@ export default function PhaseSelectionScreen() {
         <EmptyState
           icon="alert-circle-outline"
           title="Project not found"
-          subtitle="It may have been deactivated in BQE Core."
+          subtitle="It may have been deactivated."
         />
       </View>
     );

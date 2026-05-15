@@ -64,7 +64,7 @@ export default function ProcessingScreen() {
       return;
     }
     if (flatProjects.length === 0) {
-      setError('No projects found locally — sync with BQE Core first.');
+      setError('No projects found locally — sync first.');
       return;
     }
 

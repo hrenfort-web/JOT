@@ -97,7 +97,7 @@ export default function LoginScreen() {
       await promptAsync();
     } catch (e) {
       logError('login.prompt', e);
-      setError("Couldn't open the BQE Core sign-in window. Please try again.");
+      setError("Couldn't open the sign-in window. Please try again.");
       setLoading(false);
     }
   };
