@@ -48,3 +48,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Metro tee-output captured during on-device verification
+metro-log.txt
