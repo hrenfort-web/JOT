@@ -37,14 +37,6 @@ function deriveAuthenticated(tokens: StoredTokens | null): boolean {
   return !!tokens.refreshToken;
 }
 import type { BqeEmployee } from '../services/bqe/employee';
-import {
-  DEMO_ACCESS_TOKEN,
-  DEMO_EMPLOYEE,
-  DEMO_ENDPOINT,
-  clearDemoData,
-  seedDemoData,
-} from '../services/demo/seedData';
-import { useSyncStore } from './useSyncStore';
 
 export type LogoutReason = 'manual' | 'session_expired';
 
@@ -80,6 +72,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Wipe any leftover demo rows from a prior Explore Demo session before we
     // hydrate the cache with real BQE data. Each row is keyed by `bqeId LIKE
     // 'demo-%'` so this only touches demo data; real BQE rows are unaffected.
+    // Lazy require: break circular dep useAuthStore → seedData → bqe/* → useAuthStore
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { clearDemoData } = require('../services/demo/seedData') as typeof import('../services/demo/seedData');
     await clearDemoData();
 
     set({
@@ -119,10 +114,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // when isAuthenticated flips true; the store's in-flight-promise return
     // collapses both into one actual sync run. No try/catch — runSync
     // swallows errors into lastError and does not re-throw.
+    // Lazy require: break circular dep useAuthStore → useSyncStore → initialSync → useAuthStore
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useSyncStore } = require('./useSyncStore') as typeof import('./useSyncStore');
     await useSyncStore.getState().runSync('post-login');
   },
 
   loginAsDemo: async () => {
+    // Lazy require: break circular dep useAuthStore → seedData → bqe/* → useAuthStore
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { seedDemoData, DEMO_ACCESS_TOKEN, DEMO_ENDPOINT, DEMO_EMPLOYEE } = require('../services/demo/seedData') as typeof import('../services/demo/seedData');
     await seedDemoData();
     const tokens: StoredTokens = {
       accessToken: DEMO_ACCESS_TOKEN,
@@ -151,6 +152,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // BQE-fetched data into SQLite for a user that's just logged out.
     // Multi-tenant safe (a consultant switching firms won't carry over
     // the previous firm's activity-group sweep data).
+    // Lazy require: break circular dep useAuthStore → useSyncStore → initialSync → useAuthStore
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useSyncStore } = require('./useSyncStore') as typeof import('./useSyncStore');
     useSyncStore.getState().cancelSync();
 
     // Always run all three cleanups so switching between real and demo
@@ -158,6 +162,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // user object (which would resurrect "Hi, Hadyn" on the login
     // screen after a fresh launch), or stale demo rows in SQLite.
     // Each is a no-op when there's nothing to clean.
+    // Lazy require: break circular dep useAuthStore → seedData → bqe/* → useAuthStore
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { clearDemoData } = require('../services/demo/seedData') as typeof import('../services/demo/seedData');
     await Promise.all([clearTokens(), clearStoredUser(), clearDemoData()]);
     set({
       tokens: null,
