@@ -77,7 +77,7 @@ const CONFETTI_MAX_RANDOM_DELAY = 50;
 // PIVOT_Y + TAGLINE_OFFSET so the gap-below-check derives from the same
 // pivot constant the strokes use.
 const TAGLINE_TEXT = 'DONE';
-const TAGLINE_FONT_SIZE = 56;
+const TAGLINE_FONT_SIZE = 72;
 const TAGLINE_OFFSET = 60;
 
 interface ConfettiConfig {
@@ -146,6 +146,12 @@ export function SubmitWeekCelebration({
   const longScale = useRef(new Animated.Value(0)).current;
   const taglineOpacity = useRef(new Animated.Value(0)).current;
   const taglineScale = useRef(new Animated.Value(0.6)).current;
+  // V-bottom filler dot — masks the asymmetry between the rounded outer
+  // joint (overlapping end-cap semicircles bulging below the pivot) and the
+  // sharp inner-V angle (rectangular top edges meeting above the pivot).
+  // Sits at the pivot, same diameter as STROKE_HEIGHT, rendered on top of
+  // both strokes.
+  const dotOpacity = useRef(new Animated.Value(0)).current;
 
   // Confetti configs + animated values, generated once on mount. The configs
   // randomize per-instance — if the user submits two weeks in a row, the
@@ -194,6 +200,7 @@ export function SubmitWeekCelebration({
     longScale.setValue(reduceMotion ? 1 : 0);
     taglineOpacity.setValue(reduceMotion ? 1 : 0);
     taglineScale.setValue(reduceMotion ? 1 : 0.6);
+    dotOpacity.setValue(reduceMotion ? 1 : 0);
     const cRefs = confettiRefsRef.current;
     if (cRefs !== null) {
       cRefs.forEach((r) => {
@@ -311,9 +318,19 @@ export function SubmitWeekCelebration({
       }),
       // 2. Checkmark draw. Short stroke first; long stroke starts 200ms
       // later (50ms before short ends) so the V-bottom transition reads
-      // as continuous motion rather than two discrete events.
+      // as continuous motion rather than two discrete events. The V-bottom
+      // filler dot fades in alongside the short stroke (same duration, same
+      // easing) so the joint is "anchored" the moment the short stroke
+      // arrives — visually the dot completes the V tip rather than appearing
+      // as a separate beat.
       Animated.parallel([
         Animated.timing(shortScale, {
+          toValue: 1,
+          duration: 250,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(dotOpacity, {
           toValue: 1,
           duration: 250,
           easing: Easing.out(Easing.quad),
@@ -362,6 +379,7 @@ export function SubmitWeekCelebration({
     longScale,
     taglineOpacity,
     taglineScale,
+    dotOpacity,
     onDismiss,
   ]);
 
@@ -410,10 +428,73 @@ export function SubmitWeekCelebration({
             style={[styles.scrim, { opacity: scrimOpacity }]}
             pointerEvents="none"
           />
-          {/* Centered stage. Confetti renders BEHIND the check (rendered
-              first) so the check is always the foreground anchor. */}
+          {/* Centered stage. Render order (bottom → top):
+                1. Checkmark layer (long stroke → short stroke → V-bottom dot)
+                2. Confetti pieces
+                3. DONE tagline
+              The strokes-then-dot ordering inside the checkContainer ensures
+              the dot masks the V-joint asymmetry; the confetti rendering
+              AFTER the checkContainer puts the pieces above the check at the
+              spawn moment. */}
           <View style={styles.stage} pointerEvents="none">
-            {/* Confetti layer */}
+            {/* Checkmark layer */}
+            <View style={styles.checkContainer}>
+              {/* Long stroke. transformOrigin '0% 50%' pins the pivot to the
+                  rectangle's left edge — the V-bottom point (PIVOT_X, PIVOT_Y). */}
+              <Animated.View
+                style={[
+                  styles.stroke,
+                  {
+                    left: PIVOT_X,
+                    top: PIVOT_Y - STROKE_HEIGHT / 2,
+                    width: LONG_LENGTH,
+                    transformOrigin: '0% 50%',
+                    transform: [
+                      { scaleX: longScale },
+                      { rotate: `${LONG_ANGLE_DEG}deg` },
+                    ],
+                  },
+                ]}
+              />
+              {/* Short stroke. transformOrigin '100% 50%' pins the pivot to
+                  the rectangle's right edge, which after positioning sits at
+                  the V-bottom point. scaleX 0→1 grows the stroke outward
+                  from that pivot back along its rotated long axis. */}
+              <Animated.View
+                style={[
+                  styles.stroke,
+                  {
+                    left: PIVOT_X - SHORT_LENGTH,
+                    top: PIVOT_Y - STROKE_HEIGHT / 2,
+                    width: SHORT_LENGTH,
+                    transformOrigin: '100% 50%',
+                    transform: [
+                      { scaleX: shortScale },
+                      { rotate: `${SHORT_ANGLE_DEG}deg` },
+                    ],
+                  },
+                ]}
+              />
+              {/* V-bottom filler dot. Centered at (PIVOT_X, PIVOT_Y) with
+                  diameter STROKE_HEIGHT, rendered on top of both strokes.
+                  Same color overlap with the stroke end-caps below the
+                  pivot (zero net visible mass added there); fills the small
+                  notch where the rectangular top edges meet above. */}
+              <Animated.View
+                style={[
+                  styles.dot,
+                  {
+                    left: PIVOT_X - STROKE_HEIGHT / 2,
+                    top: PIVOT_Y - STROKE_HEIGHT / 2,
+                    opacity: dotOpacity,
+                  },
+                ]}
+              />
+            </View>
+            {/* Confetti pieces — rendered after the checkContainer so they
+                sit above it in z-order. Each piece starts at the stage's
+                center (via the stage's flex-centering applied to abs-
+                positioned children with no left/top) and animates outward. */}
             {configs.map((config, i) => {
               const r = refs[i];
               const rotateInterp = r.rotate.interpolate({
@@ -438,46 +519,6 @@ export function SubmitWeekCelebration({
                 />
               );
             })}
-            {/* Checkmark layer */}
-            <View style={styles.checkContainer}>
-              {/* Short stroke. transformOrigin '100% 50%' pins the pivot to
-                  the rectangle's right edge, which after positioning sits at
-                  the V-bottom point. scaleX 0→1 grows the stroke outward
-                  from that pivot back along its rotated long axis. */}
-              <Animated.View
-                style={[
-                  styles.stroke,
-                  {
-                    left: PIVOT_X - SHORT_LENGTH,
-                    top: PIVOT_Y - STROKE_HEIGHT / 2,
-                    width: SHORT_LENGTH,
-                    transformOrigin: '100% 50%',
-                    transform: [
-                      { scaleX: shortScale },
-                      { rotate: `${SHORT_ANGLE_DEG}deg` },
-                    ],
-                  },
-                ]}
-              />
-              {/* Long stroke. transformOrigin '0% 50%' pins the pivot to the
-                  rectangle's left edge — same V-bottom point as the short
-                  stroke. */}
-              <Animated.View
-                style={[
-                  styles.stroke,
-                  {
-                    left: PIVOT_X,
-                    top: PIVOT_Y - STROKE_HEIGHT / 2,
-                    width: LONG_LENGTH,
-                    transformOrigin: '0% 50%',
-                    transform: [
-                      { scaleX: longScale },
-                      { rotate: `${LONG_ANGLE_DEG}deg` },
-                    ],
-                  },
-                ]}
-              />
-            </View>
             {/* Tagline. Positioned absolutely within the stage at
                 PIVOT_Y + TAGLINE_OFFSET so the gap-below-check derives from
                 the same pivot constant the strokes use. left:0/right:0 +
@@ -534,6 +575,13 @@ const styles = StyleSheet.create({
     // Round the ends so the stroke caps approximate `strokeLinecap="round"`.
     borderRadius: STROKE_HEIGHT / 2,
   },
+  dot: {
+    position: 'absolute',
+    width: STROKE_HEIGHT,
+    height: STROKE_HEIGHT,
+    borderRadius: STROKE_HEIGHT / 2,
+    backgroundColor: colors.accent,
+  },
   confettiPiece: {
     position: 'absolute',
     width: CONFETTI_W,
@@ -551,6 +599,13 @@ const styles = StyleSheet.create({
     fontFamily: FONT_HANDWRITING,
     fontSize: TAGLINE_FONT_SIZE,
     color: colors.accent,
-    letterSpacing: 2,
+    letterSpacing: 3,
+    // Same-color text shadow with zero blur radius produces a crisp doubled
+    // outline — a "double-pass pen" effect that bolds each letter without
+    // requiring a bold font variant. Stays on-brand: still Architects
+    // Daughter, still burnt orange, just heavier.
+    textShadowColor: colors.accent,
+    textShadowOffset: { width: 1.5, height: 1.5 },
+    textShadowRadius: 0,
   },
 });
