@@ -1,6 +1,12 @@
 import { bqeClient, fetchAllPages } from './client';
 import { toBqeDate, toIsoDay } from './utils';
-import { run, getAll, upsertMany, sqliteBool } from '../../db/database';
+import {
+  run,
+  getAll,
+  sqliteBool,
+  transaction,
+  type SqlParam,
+} from '../../db/database';
 import {
   EntrySource,
   LocalTimeEntry,
@@ -76,54 +82,201 @@ export async function fetchWeekEntries(
   const entries = await fetchAllPages<BqeTimeEntry>('/timeentry', {
     where: `resourceId='${resourceId}' AND date>='${start}' AND date<='${end}'`,
   });
-  await persistFetchedEntries(entries);
+  await persistFetchedEntries(entries, {
+    resourceId,
+    weekStart: start,
+    weekEnd: end,
+  });
   return entries;
 }
 
-async function persistFetchedEntries(entries: BqeTimeEntry[]): Promise<void> {
-  if (entries.length === 0) return;
-  const now = new Date().toISOString();
-  const rows = entries.map((e) => [
-    e.id,
-    e.projectId,
-    e.activityId,
-    e.resourceId,
-    toIsoDay(e.date),
-    Number(e.actualHours ?? 0),
-    e.memo ?? e.description ?? null,
-    sqliteBool(e.billable ?? true),
-    'synced',
-    // Recover the original source from the BQE description tag (we apply
-    // it on every write via utils/sourceTag). Untagged entries (created
-    // before tagging shipped, or by another BQE client) fall back to
-    // 'manual'. Without this, re-installed devices would mis-attribute
-    // every fetched scan entry.
-    (parseSourceTag(e.description) ?? 'manual') as EntrySource,
-    now,
-    e.billStatus ?? null,
-    e.version != null ? String(e.version) : null,
-  ]);
-  await upsertMany(
-    'LocalTimeEntry',
-    [
-      'bqeId',
-      'projectId',
-      'activityId',
-      'resourceId',
-      'date',
-      'hours',
-      'memo',
-      'isBillable',
-      'syncStatus',
-      'source',
-      'createdAt',
-      'billStatus',
-      'version',
-    ],
-    rows,
-    'bqeId',
-    'persistFetchedEntries',
+interface ReconcileScope {
+  resourceId: string;
+  weekStart: string;
+  weekEnd: string;
+}
+
+/**
+ * Reconcile local LocalTimeEntry rows with a BQE /timeentry GET response.
+ *
+ * Three sequential passes:
+ *
+ *   1. Pre-filter pending-edit rows (syncStatus='pending' WITH non-null
+ *      bqeId — i.e., the user edited a previously-synced entry and the
+ *      queue hasn't re-POSTed yet). These get excluded from the upsert
+ *      so the local edits aren't clobbered by the stale server copy.
+ *
+ *   2. Upsert non-pending entries. createdAt is set on INSERT but omitted
+ *      from the ON CONFLICT DO UPDATE clause — so the user's original
+ *      creation timestamp survives every subsequent sync (the prior
+ *      shared-helper upsert overwrote it with the sync timestamp).
+ *
+ *   3. Delete orphans: local synced entries within the scope whose bqeId
+ *      is absent from the fetched response. Eventual-consistency guard:
+ *      rows with createdAt newer than fetchStart - 60s are exempted so
+ *      a fresh POST that BQE hasn't indexed yet isn't nuked. CRITICAL:
+ *      no early-return on empty `entries`; an empty response IS the
+ *      "BQE deleted everything in this window" signal and the delete
+ *      pass MUST run.
+ *
+ * Scope-bound (resourceId + date BETWEEN weekStart/weekEnd) so the delete
+ * pass never touches entries outside the fetched window. Multiple defensive
+ * filters layered (syncStatus='synced', bqeId IS NOT NULL) so the pass
+ * cannot touch pending, failed, or locally-only entries.
+ */
+async function persistFetchedEntries(
+  entries: BqeTimeEntry[],
+  scope: ReconcileScope,
+): Promise<void> {
+  const fetchStartTime = new Date().toISOString();
+  const fetchedBqeIds = new Set(entries.map((e) => e.id));
+
+  // Pass 1 — find rows the user has edited but the queue hasn't re-POSTed.
+  // We must NOT overwrite their local edits with the stale server copy.
+  const pendingBqeIds = await loadPendingBqeIdsInRange(scope);
+
+  // Pass 2 — upsert the non-pending entries.
+  const entriesToUpsert = entries.filter((e) => !pendingBqeIds.has(e.id));
+  if (entriesToUpsert.length > 0) {
+    const rows = entriesToUpsert.map<SqlParam[]>((e) => [
+      e.id,
+      e.projectId,
+      e.activityId,
+      e.resourceId,
+      toIsoDay(e.date),
+      Number(e.actualHours ?? 0),
+      e.memo ?? e.description ?? null,
+      sqliteBool(e.billable ?? true),
+      'synced',
+      // Recover the original source from the BQE description tag (we apply
+      // it on every write via utils/sourceTag). Untagged entries (created
+      // before tagging shipped, or by another BQE client) fall back to
+      // 'manual'. Without this, re-installed devices would mis-attribute
+      // every fetched scan entry.
+      (parseSourceTag(e.description) ?? 'manual') as EntrySource,
+      fetchStartTime,
+      e.billStatus ?? null,
+      e.version != null ? String(e.version) : null,
+    ]);
+    await upsertFetchedEntries(rows);
+  }
+
+  // Pass 3 — delete orphans. Runs whether or not entries was empty.
+  const deletedCount = await deleteOrphanedEntriesInRange(
+    scope,
+    fetchedBqeIds,
+    fetchStartTime,
   );
+
+  console.log(
+    `[jot:sync-reconcile] fetched=${entries.length} ` +
+      `upserted=${entriesToUpsert.length} ` +
+      `pending-skipped=${pendingBqeIds.size} ` +
+      `orphans-deleted=${deletedCount} ` +
+      `scope=${scope.weekStart}..${scope.weekEnd}`,
+  );
+}
+
+/**
+ * Pass 1 helper. Returns the set of bqeIds for rows in scope that the user
+ * has locally edited but the queue hasn't re-POSTed yet. The presence of
+ * both a bqeId (previously synced) AND syncStatus='pending' (edited since)
+ * is the signal — see services/bqe/timeentry.ts patchLocalEntry, which
+ * resets syncStatus to 'pending' on every edit.
+ */
+async function loadPendingBqeIdsInRange(
+  scope: ReconcileScope,
+): Promise<Set<string>> {
+  const rows = await getAll<{ bqeId: string }>(
+    `SELECT bqeId FROM LocalTimeEntry
+     WHERE resourceId = ?
+       AND date BETWEEN ? AND ?
+       AND syncStatus = 'pending'
+       AND bqeId IS NOT NULL`,
+    [scope.resourceId, scope.weekStart, scope.weekEnd],
+  );
+  return new Set(rows.map((r) => r.bqeId));
+}
+
+/**
+ * Pass 2 helper. Custom upsert SQL (rather than the shared upsertMany helper)
+ * because we need `createdAt` preserved on conflict — the shared helper
+ * writes `EXCLUDED.col` for every non-conflict-key column unconditionally,
+ * which would overwrite the user's original creation timestamp with the
+ * sync timestamp on every fetch. Here createdAt is in the INSERT column
+ * list (NOT NULL constraint) but omitted from DO UPDATE SET so SQLite
+ * leaves the existing value untouched on UPDATE.
+ */
+async function upsertFetchedEntries(rows: SqlParam[][]): Promise<void> {
+  if (rows.length === 0) return;
+  const sql = `INSERT INTO LocalTimeEntry (
+      bqeId, projectId, activityId, resourceId, date, hours, memo,
+      isBillable, syncStatus, source, createdAt, billStatus, version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(bqeId) DO UPDATE SET
+      projectId = excluded.projectId,
+      activityId = excluded.activityId,
+      resourceId = excluded.resourceId,
+      date = excluded.date,
+      hours = excluded.hours,
+      memo = excluded.memo,
+      isBillable = excluded.isBillable,
+      syncStatus = excluded.syncStatus,
+      source = excluded.source,
+      billStatus = excluded.billStatus,
+      version = excluded.version`;
+  await transaction(async (db) => {
+    const stmt = await db.prepareAsync(sql);
+    try {
+      for (const row of rows) {
+        await stmt.executeAsync(row);
+      }
+    } finally {
+      await stmt.finalizeAsync();
+    }
+  }, 'persistFetchedEntries.upsert');
+}
+
+/**
+ * Pass 3 helper. Deletes local synced entries within scope whose bqeId is
+ * absent from the fetched set, EXCEPT those created within the last 60s
+ * (eventual-consistency guard against BQE indexing latency on entries we
+ * just POSTed).
+ *
+ * Empty-fetched-set handling: SQLite rejects `IN ()`. When BQE returned no
+ * entries (the all-deleted signal), the NOT IN clause is omitted entirely;
+ * every synced row in scope becomes a candidate, gated only by the
+ * createdAt guard.
+ */
+async function deleteOrphanedEntriesInRange(
+  scope: ReconcileScope,
+  fetchedBqeIds: Set<string>,
+  fetchStartTime: string,
+): Promise<number> {
+  const params: SqlParam[] = [scope.resourceId, scope.weekStart, scope.weekEnd];
+  let sql: string;
+  if (fetchedBqeIds.size > 0) {
+    const placeholders = Array.from(fetchedBqeIds, () => '?').join(',');
+    sql = `DELETE FROM LocalTimeEntry
+           WHERE resourceId = ?
+             AND date BETWEEN ? AND ?
+             AND syncStatus = 'synced'
+             AND bqeId IS NOT NULL
+             AND bqeId NOT IN (${placeholders})
+             AND datetime(createdAt) < datetime(?, '-60 seconds')`;
+    for (const id of fetchedBqeIds) params.push(id);
+    params.push(fetchStartTime);
+  } else {
+    sql = `DELETE FROM LocalTimeEntry
+           WHERE resourceId = ?
+             AND date BETWEEN ? AND ?
+             AND syncStatus = 'synced'
+             AND bqeId IS NOT NULL
+             AND datetime(createdAt) < datetime(?, '-60 seconds')`;
+    params.push(fetchStartTime);
+  }
+  const result = await run(sql, params);
+  return result.changes ?? 0;
 }
 
 const LOCKED_BILL_STATUSES = new Set(['billed', 'invoiced', 'locked', 'paid']);
