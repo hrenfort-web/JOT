@@ -133,7 +133,7 @@ export default function LoginScreen() {
         <Text style={styles.wordmark}>
           Jot it<Text style={styles.wordmarkPeriod}>.</Text>
         </Text>
-        <Text style={styles.tagline}>Done.</Text>
+        <Text style={styles.tagline}>Done<Text style={styles.taglinePeriod}>.</Text></Text>
       </View>
 
       {sessionExpired ? (
@@ -159,7 +159,7 @@ export default function LoginScreen() {
           {loading ? (
             <ActivityIndicator color={colors.surface} />
           ) : (
-            <Text style={styles.buttonText}>Connect to BQE Core</Text>
+            <Text style={styles.buttonText}>Connect</Text>
           )}
         </Pressable>
 
@@ -232,6 +232,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     textAlign: 'center',
   },
+  taglinePeriod: { color: colors.accent },
   actions: {
     gap: 16,
   },

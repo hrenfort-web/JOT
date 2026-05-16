@@ -362,6 +362,139 @@ export default function HomeScreen() {
     );
   };
 
+  // Extracted into locals so the render order can flip based on whether the
+  // selected day has any entries. Populated day → entries first (audit bias);
+  // empty day → projects first (entry-point bias). "Recent projects" and
+  // "Log your time" stay grouped as a single unit in both orderings.
+  const projectsBlock = (
+    <View style={styles.projects}>
+      <Text style={styles.sectionHeader}>Recent projects</Text>
+
+      {flatProjects.length === 0 ? (
+        isSyncing ? (
+          <EmptyState
+            icon="cloud-download-outline"
+            title="Syncing your projects…"
+          />
+        ) : (
+          <EmptyState
+            icon="briefcase-outline"
+            title="No projects yet."
+            subtitle="Your projects will appear here once they're loaded."
+          />
+        )
+      ) : noRecentActivity ? (
+        // Honest empty state: don't fake a list out of the alphabetical
+        // first N projects. The + FAB is the route to the full picker.
+        // The "More projects" expander is intentionally suppressed here
+        // for the same reason — pretending the user has a relevant list
+        // when they haven't logged anything is misleading.
+        <EmptyState
+          icon="calendar-outline"
+          title="No recent activity"
+          subtitle="Tap + below to log your first entry. Projects you charge to will appear here."
+        />
+      ) : (
+        <View style={styles.projectList}>
+          {visibleProjects.map((node) => (
+            <ProjectCard
+              key={node.project.id}
+              name={node.project.name}
+              phaseLabel={phaseLabelByParent.get(node.project.id) ?? null}
+              hours={hoursByParent.get(node.project.id) ?? 0}
+              color={node.project.color ?? colors.accent}
+              onPress={() => {
+                router.push(`/entry/${node.project.id}`);
+              }}
+            />
+          ))}
+          {showMoreToggle ? (
+            <Pressable
+              onPress={() => setShowAllProjects((v) => !v)}
+              style={({ pressed }) => [styles.moreBtn, pressed && styles.moreBtnPressed]}
+            >
+              <Ionicons
+                name={showAllProjects ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={colors.textSecondary}
+              />
+              <Text style={styles.moreBtnText}>
+                {showAllProjects
+                  ? 'Hide other projects'
+                  : `More projects (${moreProjectsCount})`}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
+
+      {lastError ? <Text style={styles.error}>{lastError}</Text> : null}
+
+      {/* Persistent CTA — visible whether the user has 0 entries or a
+          full week logged. Unconditional so users always have a clear
+          path to the picker without hunting for the FAB. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Log your time"
+        onPress={() => {
+          router.push('/entry/picker');
+        }}
+        style={({ pressed }) => [
+          styles.firstEntryBtn,
+          pressed && styles.firstEntryBtnPressed,
+        ]}
+      >
+        <Text style={styles.firstEntryBtnText}>Log your time</Text>
+      </Pressable>
+    </View>
+  );
+
+  const entriesBlock = (
+    <View style={styles.entries}>
+      <View style={styles.entriesHeaderRow}>
+        <Text style={styles.sectionHeader}>{entriesHeading(selectedDate, today)}</Text>
+        {dayEntries.length > 0 ? (
+          <Text style={styles.entriesCount}>
+            {dayEntries.length} entr{dayEntries.length === 1 ? 'y' : 'ies'}
+          </Text>
+        ) : null}
+      </View>
+
+      {dayEntries.length === 0 ? (
+        <EmptyState
+          icon="time-outline"
+          title="No entries yet for this day"
+          subtitle="Tap a project above or use the camera to scan a timesheet."
+        />
+      ) : (
+        <View style={styles.entryList}>
+          {dayEntries.map((entry) => {
+            const phase = projectsById.get(entry.projectId);
+            const parent = phase?.parentId
+              ? projectsById.get(phase.parentId)
+              : phase;
+            return (
+              <EntryRow
+                key={entry.id}
+                projectName={parent?.name ?? phase?.name ?? '(unknown)'}
+                phaseLabel={phase?.phaseCode ?? null}
+                hours={entry.hours}
+                memo={entry.memo}
+                color={parent?.color ?? colors.accent}
+                locked={!isEntryEditable(entry)}
+                pending={entry.syncStatus === 'pending'}
+                failed={entry.syncStatus === 'failed'}
+                submissionStatus={entry.submissionStatus}
+                onPress={() => handleEntryPress(entry)}
+                onDelete={() => handleEntryDelete(entry)}
+              />
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.safe}>
       {!online ? <OfflineBanner /> : null}
@@ -434,130 +567,17 @@ export default function HomeScreen() {
           <SummaryPill label="Remaining" hours={remaining} />
         </View>
 
-        <View style={styles.projects}>
-          <Text style={styles.sectionHeader}>Recent projects</Text>
-
-          {flatProjects.length === 0 ? (
-            isSyncing ? (
-              <EmptyState
-                icon="cloud-download-outline"
-                title="Syncing your projects…"
-              />
-            ) : (
-              <EmptyState
-                icon="briefcase-outline"
-                title="No projects yet."
-                subtitle="Your projects will appear here once they're loaded."
-              />
-            )
-          ) : noRecentActivity ? (
-            // Honest empty state: don't fake a list out of the alphabetical
-            // first N projects. The + FAB is the route to the full picker.
-            // The "More projects" expander is intentionally suppressed here
-            // for the same reason — pretending the user has a relevant list
-            // when they haven't logged anything is misleading.
-            <EmptyState
-              icon="calendar-outline"
-              title="No recent activity"
-              subtitle="Tap + below to log your first entry. Projects you charge to will appear here."
-            />
-          ) : (
-            <View style={styles.projectList}>
-              {visibleProjects.map((node) => (
-                <ProjectCard
-                  key={node.project.id}
-                  name={node.project.name}
-                  phaseLabel={phaseLabelByParent.get(node.project.id) ?? null}
-                  hours={hoursByParent.get(node.project.id) ?? 0}
-                  color={node.project.color ?? colors.accent}
-                  onPress={() => {
-                    router.push(`/entry/${node.project.id}`);
-                  }}
-                />
-              ))}
-              {showMoreToggle ? (
-                <Pressable
-                  onPress={() => setShowAllProjects((v) => !v)}
-                  style={({ pressed }) => [styles.moreBtn, pressed && styles.moreBtnPressed]}
-                >
-                  <Ionicons
-                    name={showAllProjects ? 'chevron-up' : 'chevron-down'}
-                    size={16}
-                    color={colors.textSecondary}
-                  />
-                  <Text style={styles.moreBtnText}>
-                    {showAllProjects
-                      ? 'Hide other projects'
-                      : `More projects (${moreProjectsCount})`}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          )}
-
-          {lastError ? <Text style={styles.error}>{lastError}</Text> : null}
-
-          {/* Persistent CTA — visible whether the user has 0 entries or a
-              full week logged. Unconditional so users always have a clear
-              path to the picker without hunting for the FAB. */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Log your time"
-            onPress={() => {
-              router.push('/entry/picker');
-            }}
-            style={({ pressed }) => [
-              styles.firstEntryBtn,
-              pressed && styles.firstEntryBtnPressed,
-            ]}
-          >
-            <Text style={styles.firstEntryBtnText}>Log your time</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.entries}>
-          <View style={styles.entriesHeaderRow}>
-            <Text style={styles.sectionHeader}>{entriesHeading(selectedDate, today)}</Text>
-            {dayEntries.length > 0 ? (
-              <Text style={styles.entriesCount}>
-                {dayEntries.length} entr{dayEntries.length === 1 ? 'y' : 'ies'}
-              </Text>
-            ) : null}
-          </View>
-
-          {dayEntries.length === 0 ? (
-            <EmptyState
-              icon="time-outline"
-              title="No entries yet for this day"
-              subtitle="Tap a project above or use the camera to scan a timesheet."
-            />
-          ) : (
-            <View style={styles.entryList}>
-              {dayEntries.map((entry) => {
-                const phase = projectsById.get(entry.projectId);
-                const parent = phase?.parentId
-                  ? projectsById.get(phase.parentId)
-                  : phase;
-                return (
-                  <EntryRow
-                    key={entry.id}
-                    projectName={parent?.name ?? phase?.name ?? '(unknown)'}
-                    phaseLabel={phase?.phaseCode ?? null}
-                    hours={entry.hours}
-                    memo={entry.memo}
-                    color={parent?.color ?? colors.accent}
-                    locked={!isEntryEditable(entry)}
-                    pending={entry.syncStatus === 'pending'}
-                    failed={entry.syncStatus === 'failed'}
-                    submissionStatus={entry.submissionStatus}
-                    onPress={() => handleEntryPress(entry)}
-                    onDelete={() => handleEntryDelete(entry)}
-                  />
-                );
-              })}
-            </View>
-          )}
-        </View>
+        {dayEntries.length >= 1 ? (
+          <>
+            {entriesBlock}
+            {projectsBlock}
+          </>
+        ) : (
+          <>
+            {projectsBlock}
+            {entriesBlock}
+          </>
+        )}
 
         {weekEntries.length > 0 ? (
           <View style={styles.submitWrap}>
