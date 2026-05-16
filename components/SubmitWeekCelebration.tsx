@@ -46,16 +46,16 @@ import { PROJECT_COLORS } from '../utils/projectColors';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Checkmark geometry — designed in a 100×100 logical box, rendered 2.6× larger
-// (260×260 stage). All derived constants below scale with SCALE so changing
+// Checkmark geometry — designed in a 100×100 logical box, rendered 3.2× larger
+// (320×320 stage). All derived constants below scale with SCALE so changing
 // the stage size propagates cleanly.
-const SCALE = 2.6;
+const SCALE = 3.2;
 // Stroke 1 (short): (25,50) → (45,70). Length = √800 ≈ 28.284. Angle +45°.
 // Stroke 2 (long):  (45,70) → (80,30). Length = √2825 ≈ 53.150. Angle from
 // horizontal = -atan2(40, 35) ≈ -48.81° (negative because dy<0 in screen-down).
 const SHORT_LENGTH = Math.hypot(20, 20) * SCALE;
 const LONG_LENGTH = Math.hypot(35, 40) * SCALE;
-const STROKE_HEIGHT = 16;
+const STROKE_HEIGHT = 28;
 const SHORT_ANGLE_DEG = 45;
 const LONG_ANGLE_DEG = -(Math.atan2(40, 35) * 180) / Math.PI;
 // V-bottom pivot in container coords (100×100 logical box scaled by SCALE).
@@ -64,7 +64,7 @@ const PIVOT_Y = 70 * SCALE;
 const CONTAINER_SIZE = 100 * SCALE;
 
 // Confetti config — radial burst with gravity drift.
-const CONFETTI_COUNT = 40;
+const CONFETTI_COUNT = 80;
 const CONFETTI_W = 8;
 const CONFETTI_H = 16;
 const CONFETTI_DURATION = 1200;
