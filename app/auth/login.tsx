@@ -81,7 +81,6 @@ export default function LoginScreen() {
       const tokens = await exchangeCodeForTokens(code, codeVerifier);
       const employee = await fetchCurrentEmployee(tokens);
       await login(tokens, employee);
-      router.replace('/');
     } catch (e) {
       logError('login.exchange', e);
       setError(formatError(e).userMessage);
