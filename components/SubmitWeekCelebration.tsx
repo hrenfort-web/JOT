@@ -7,9 +7,10 @@ import {
   Modal,
   Pressable,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
-import { colors } from '../theme';
+import { colors, FONT_HANDWRITING } from '../theme';
 import { PROJECT_COLORS } from '../utils/projectColors';
 
 // ---------------------------------------------------------------------------
@@ -43,16 +44,18 @@ import { PROJECT_COLORS } from '../utils/projectColors';
 // expands outward from the V-bottom along its rotated long axis.
 // ---------------------------------------------------------------------------
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Checkmark geometry — designed in a 100×100 logical box, rendered 1.2× larger.
-const SCALE = 1.2;
+// Checkmark geometry — designed in a 100×100 logical box, rendered 2.6× larger
+// (260×260 stage). All derived constants below scale with SCALE so changing
+// the stage size propagates cleanly.
+const SCALE = 2.6;
 // Stroke 1 (short): (25,50) → (45,70). Length = √800 ≈ 28.284. Angle +45°.
 // Stroke 2 (long):  (45,70) → (80,30). Length = √2825 ≈ 53.150. Angle from
 // horizontal = -atan2(40, 35) ≈ -48.81° (negative because dy<0 in screen-down).
 const SHORT_LENGTH = Math.hypot(20, 20) * SCALE;
 const LONG_LENGTH = Math.hypot(35, 40) * SCALE;
-const STROKE_HEIGHT = 7;
+const STROKE_HEIGHT = 16;
 const SHORT_ANGLE_DEG = 45;
 const LONG_ANGLE_DEG = -(Math.atan2(40, 35) * 180) / Math.PI;
 // V-bottom pivot in container coords (100×100 logical box scaled by SCALE).
@@ -60,12 +63,22 @@ const PIVOT_X = 45 * SCALE;
 const PIVOT_Y = 70 * SCALE;
 const CONTAINER_SIZE = 100 * SCALE;
 
-// Confetti config.
-const CONFETTI_COUNT = 8;
+// Confetti config — radial burst with gravity drift.
+const CONFETTI_COUNT = 40;
 const CONFETTI_W = 8;
 const CONFETTI_H = 16;
 const CONFETTI_DURATION = 1200;
-const CONFETTI_STAGGER = 30;
+// Per-piece random pre-delay window — gives the burst slight organic variance
+// without the cascade feel of a Animated.stagger. Generated per play, not at
+// module load, so the burst differs across consecutive submits.
+const CONFETTI_MAX_RANDOM_DELAY = 50;
+
+// Tagline ("DONE") layout. Positioned absolutely within the stage at
+// PIVOT_Y + TAGLINE_OFFSET so the gap-below-check derives from the same
+// pivot constant the strokes use.
+const TAGLINE_TEXT = 'DONE';
+const TAGLINE_FONT_SIZE = 56;
+const TAGLINE_OFFSET = 60;
 
 interface ConfettiConfig {
   color: string;
@@ -74,14 +87,23 @@ interface ConfettiConfig {
   rotationDeg: number;
 }
 
+// Radial burst trajectory model: each piece picks a random angle around the
+// full circle and a random distance from origin, with a downward gravityBias
+// added to destY. Result: destinations distributed in a circle around the
+// spawn point, biased toward the lower half of the screen so the overall
+// motion reads as a burst that drifts down rather than scattering uniformly.
+// Pieces with angles in the upper half (sin(angle) < 0) appear to fly up
+// before being pulled down by the bias; pieces in the lower half accelerate
+// outward and down. With easeOut on both X and Y, pieces decelerate as they
+// reach their destination, settling rather than skidding.
 function makeConfettiConfigs(): ConfettiConfig[] {
   const out: ConfettiConfig[] = [];
+  const gravityBias = SCREEN_HEIGHT * 0.3;
   for (let i = 0; i < CONFETTI_COUNT; i += 1) {
-    // X spread: ±screenWidth/3, biased outward (avoid clustering at center).
-    const sign = Math.random() < 0.5 ? -1 : 1;
-    const destX = sign * (SCREEN_WIDTH / 6 + Math.random() * (SCREEN_WIDTH / 6));
-    // Y fall: 80–110% of screen height so pieces leave the viewport bottom.
-    const destY = SCREEN_HEIGHT * (0.8 + Math.random() * 0.3);
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 200 + Math.random() * 300;
+    const destX = Math.cos(angle) * distance;
+    const destY = Math.sin(angle) * distance + gravityBias;
     // Rotation: [-720°, +720°] — two full spins in either direction.
     const rotationDeg = (Math.random() - 0.5) * 1440;
     const color = PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)];
@@ -122,6 +144,8 @@ export function SubmitWeekCelebration({
   const overallOpacity = useRef(new Animated.Value(1)).current;
   const shortScale = useRef(new Animated.Value(0)).current;
   const longScale = useRef(new Animated.Value(0)).current;
+  const taglineOpacity = useRef(new Animated.Value(0)).current;
+  const taglineScale = useRef(new Animated.Value(0.6)).current;
 
   // Confetti configs + animated values, generated once on mount. The configs
   // randomize per-instance — if the user submits two weeks in a row, the
@@ -161,11 +185,15 @@ export function SubmitWeekCelebration({
     }
     dismissedRef.current = false;
 
-    // Reset animated values.
+    // Reset animated values. In reduce-motion mode the check strokes and
+    // tagline are pinned to their "complete" state up front so they appear
+    // statically alongside the scrim fade-in (no per-element animation).
     scrimOpacity.setValue(0);
     overallOpacity.setValue(1);
     shortScale.setValue(reduceMotion ? 1 : 0);
     longScale.setValue(reduceMotion ? 1 : 0);
+    taglineOpacity.setValue(reduceMotion ? 1 : 0);
+    taglineScale.setValue(reduceMotion ? 1 : 0.6);
     const cRefs = confettiRefsRef.current;
     if (cRefs !== null) {
       cRefs.forEach((r) => {
@@ -209,40 +237,70 @@ export function SubmitWeekCelebration({
     // Full motion sequence.
     const configs = confettiConfigsRef.current ?? [];
     const refs = confettiRefsRef.current ?? [];
+    // Each piece's animation: a tiny random pre-delay (0–50ms) for organic
+    // burst variance, then a parallel of {translateX, translateY, rotation,
+    // tail-only opacity fade}. All 40 pieces run as siblings of the tagline
+    // animation inside a single outer Animated.parallel — they all start at
+    // t=900 (right after the check completes) and the block resolves when
+    // the longest child finishes.
     const confettiAnimations = configs.map((config, i) => {
       const r = refs[i];
-      return Animated.parallel([
-        Animated.timing(r.x, {
-          toValue: config.destX,
-          duration: CONFETTI_DURATION,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(r.y, {
-          toValue: config.destY,
-          duration: CONFETTI_DURATION,
-          // Easing.in approximates gravity acceleration on the fall.
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(r.rotate, {
-          toValue: 1,
-          duration: CONFETTI_DURATION,
-          useNativeDriver: true,
-        }),
-        // Opacity holds at 1 for 80% of the duration, fades to 0 in the
-        // final 20%. Composed as sequence(delay, timing) so the fade
-        // segment only runs at the tail.
-        Animated.sequence([
-          Animated.delay(CONFETTI_DURATION * 0.8),
-          Animated.timing(r.opacity, {
-            toValue: 0,
-            duration: CONFETTI_DURATION * 0.2,
+      const randomDelay = Math.random() * CONFETTI_MAX_RANDOM_DELAY;
+      return Animated.sequence([
+        Animated.delay(randomDelay),
+        Animated.parallel([
+          Animated.timing(r.x, {
+            toValue: config.destX,
+            duration: CONFETTI_DURATION,
+            easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
           }),
+          Animated.timing(r.y, {
+            toValue: config.destY,
+            duration: CONFETTI_DURATION,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+          Animated.timing(r.rotate, {
+            toValue: 1,
+            duration: CONFETTI_DURATION,
+            useNativeDriver: true,
+          }),
+          // Opacity holds at 1 for 70% of the duration, fades to 0 in the
+          // final 30%. Slightly shorter hold than the original spec since
+          // the burst pieces travel further and risk overshooting the
+          // viewport before fading; the longer fade window keeps the tail
+          // gentle even at the edges.
+          Animated.sequence([
+            Animated.delay(CONFETTI_DURATION * 0.7),
+            Animated.timing(r.opacity, {
+              toValue: 0,
+              duration: CONFETTI_DURATION * 0.3,
+              useNativeDriver: true,
+            }),
+          ]),
         ]),
       ]);
     });
+
+    // Tagline animation — runs in parallel with the confetti burst at
+    // t=900. Opacity is a quick 200ms fade-in; scale uses the same spring
+    // tuning as the hours.tsx pop pattern (friction 5, tension 200) so it
+    // settles with the same brand "pop" feel as the hour value update on
+    // the entry screen.
+    const taglineAnimation = Animated.parallel([
+      Animated.timing(taglineOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.spring(taglineScale, {
+        toValue: 1,
+        friction: 5,
+        tension: 200,
+        useNativeDriver: true,
+      }),
+    ]);
 
     const seq = Animated.sequence([
       // 1. Scrim fade in.
@@ -271,10 +329,15 @@ export function SubmitWeekCelebration({
           }),
         ]),
       ]),
-      // 3. Confetti spawn (stagger).
-      Animated.stagger(CONFETTI_STAGGER, confettiAnimations),
-      // 4. Brief hold so the eye settles on the completed check before fade.
-      Animated.delay(200),
+      // 3. Confetti burst + tagline reveal, both starting at the same
+      // moment. The block resolves when ALL children finish — confetti
+      // takes the full ~1200ms, tagline finishes earlier; the wait until
+      // confetti is done is exactly the "tagline visible" hold we want
+      // before fading.
+      Animated.parallel([...confettiAnimations, taglineAnimation]),
+      // 4. Hold so the eye settles on the completed check + tagline
+      // before fade. Confetti is already gone by this point.
+      Animated.delay(400),
       // 5. Fade everything out.
       Animated.timing(overallOpacity, {
         toValue: 0,
@@ -290,7 +353,17 @@ export function SubmitWeekCelebration({
       // Cleanup if visible flips false externally (e.g., parent unmounts).
       runningRef.current?.stop();
     };
-  }, [visible, reduceMotion, scrimOpacity, overallOpacity, shortScale, longScale, onDismiss]);
+  }, [
+    visible,
+    reduceMotion,
+    scrimOpacity,
+    overallOpacity,
+    shortScale,
+    longScale,
+    taglineOpacity,
+    taglineScale,
+    onDismiss,
+  ]);
 
   const handleTapDismiss = () => {
     if (dismissedRef.current) return;
@@ -405,6 +478,25 @@ export function SubmitWeekCelebration({
                 ]}
               />
             </View>
+            {/* Tagline. Positioned absolutely within the stage at
+                PIVOT_Y + TAGLINE_OFFSET so the gap-below-check derives from
+                the same pivot constant the strokes use. left:0/right:0 +
+                alignItems:'center' centers the text horizontally within the
+                stage. The Text can overflow the stage's vertical bound at
+                large font sizes — RN's default overflow:'visible' allows
+                that. The transform stack uses scale (uniform) so it pops
+                from the center. */}
+            <Animated.View
+              style={[
+                styles.tagline,
+                {
+                  opacity: taglineOpacity,
+                  transform: [{ scale: taglineScale }],
+                },
+              ]}
+            >
+              <Text style={styles.taglineText}>{TAGLINE_TEXT}</Text>
+            </Animated.View>
           </View>
         </Animated.View>
       </Pressable>
@@ -447,5 +539,18 @@ const styles = StyleSheet.create({
     width: CONFETTI_W,
     height: CONFETTI_H,
     borderRadius: 2,
+  },
+  tagline: {
+    position: 'absolute',
+    top: PIVOT_Y + TAGLINE_OFFSET,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  taglineText: {
+    fontFamily: FONT_HANDWRITING,
+    fontSize: TAGLINE_FONT_SIZE,
+    color: colors.accent,
+    letterSpacing: 2,
   },
 });
