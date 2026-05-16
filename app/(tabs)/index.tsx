@@ -31,6 +31,7 @@ import { FloatingActionButton } from '../../components/FloatingActionButton';
 import { EmptyState } from '../../components/EmptyState';
 import { OfflineBanner } from '../../components/OfflineBanner';
 import { SubmitWeekCard } from '../../components/SubmitWeekCard';
+import { SubmitWeekCelebration } from '../../components/SubmitWeekCelebration';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
@@ -90,6 +91,7 @@ export default function HomeScreen() {
   const online = useOnline();
 
   const [isSubmittingWeek, setIsSubmittingWeek] = useState(false);
+  const [celebrationVisible, setCelebrationVisible] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
   const isSyncing = useSyncStore((s) => s.isSyncing);
   // 90-day entry window for the picker sort. Loaded once on bootstrap and
@@ -284,7 +286,10 @@ export default function HomeScreen() {
             if (!result.ok) {
               showToast(`Couldn't submit: ${result.error}`, 'error');
             } else if (result.failedCount === 0) {
-              showToast('Week submitted!', 'success');
+              // Full success — celebration overlay carries the signal.
+              // Toast is intentionally suppressed here to avoid two
+              // competing success indicators stacking on screen.
+              setCelebrationVisible(true);
             } else {
               const total = result.count + result.failedCount;
               showToast(
@@ -574,6 +579,10 @@ export default function HomeScreen() {
         onPress={() => {
           router.push('/entry/picker');
         }}
+      />
+      <SubmitWeekCelebration
+        visible={celebrationVisible}
+        onDismiss={() => setCelebrationVisible(false)}
       />
     </SafeAreaView>
   );
