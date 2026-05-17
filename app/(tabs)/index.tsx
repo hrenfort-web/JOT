@@ -525,7 +525,7 @@ export default function HomeScreen() {
             >
               <Ionicons name="chevron-back" size={18} color={colors.text} />
             </Pressable>
-            <Text style={styles.subGreeting}>
+            <Text style={styles.weekRange} numberOfLines={1} ellipsizeMode="tail">
               {weekRangeLabel(monday, friday, isPastWeek, isFutureWeek)}
             </Text>
             <Pressable
@@ -663,15 +663,12 @@ function buildPhaseLabelByParent(
 function weekRangeLabel(
   monday: Date,
   friday: Date,
-  isPast: boolean,
-  isFuture: boolean,
+  _isPast: boolean,
+  _isFuture: boolean,
 ): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const range = `${fmt(monday)} — ${fmt(friday)}`;
-  if (isPast) return `Past week of ${range}`;
-  if (isFuture) return `Future week of ${range}`;
-  return `Week of ${range}`;
+  return `Week of ${fmt(monday)} — ${fmt(friday)}`;
 }
 
 function greetingFor(user: { firstName?: string; displayName?: string } | null): string {
@@ -732,10 +729,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  subGreeting: {
+  weekRange: {
     flex: 1,
-    fontSize: 14,
-    color: colors.textSecondary,
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle,
+    borderRadius: 12,
   },
   chev: {
     width: 28,
@@ -755,11 +760,11 @@ const styles = StyleSheet.create({
   chevDisabled: {
     opacity: 0.35,
   },
-  // "Today" jump-to pill — when the user is viewing a past/future week,
-  // this offers a one-tap shortcut back. Theme B: accentTint background +
-  // accent label, NOT a solid accent fill with white text. The week-nav
-  // row is supporting chrome, not a CTA — the muted treatment keeps it
-  // from competing with the +Log time FAB.
+  // Week-nav row mixes chrome and state: the chevrons + Today pill stay
+  // quiet support, but the weekRange itself is now a deliberate state
+  // indicator — wrong-week submissions are a known BQE Core error mode,
+  // and the prominent treatment makes the user's current week unmistakable
+  // at a glance. Still tuned to not compete with the +Log time FAB.
   todayPill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
