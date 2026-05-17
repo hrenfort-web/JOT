@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { Ionicons } from '@expo/vector-icons';
 import { colors, FONT_HANDWRITING } from '../../theme';
@@ -367,7 +368,7 @@ export default function HomeScreen() {
   // empty day → projects first (entry-point bias). "Recent projects" and
   // "Log your time" stay grouped as a single unit in both orderings.
   const projectsBlock = (
-    <View style={styles.projects}>
+    <Animated.View style={styles.projects} layout={LinearTransition.springify()}>
       <Text style={styles.sectionHeader}>Recent projects</Text>
 
       {flatProjects.length === 0 ? (
@@ -446,11 +447,11 @@ export default function HomeScreen() {
       >
         <Text style={styles.firstEntryBtnText}>Log your time</Text>
       </Pressable>
-    </View>
+    </Animated.View>
   );
 
   const entriesBlock = (
-    <View style={styles.entries}>
+    <Animated.View style={styles.entries} layout={LinearTransition.springify()}>
       <View style={styles.entriesHeaderRow}>
         <Text style={styles.sectionHeader}>{entriesHeading(selectedDate, today)}</Text>
         {dayEntries.length > 0 ? (
@@ -492,7 +493,7 @@ export default function HomeScreen() {
           })}
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 
   return (
@@ -719,9 +720,12 @@ const styles = StyleSheet.create({
   // handwriting font has its own natural spacing and tightening warps it.
   greeting: {
     fontFamily: FONT_HANDWRITING,
-    fontSize: 32,
-    lineHeight: 36,
+    fontSize: 44,
+    lineHeight: 50,
     color: colors.text,
+    textShadowColor: colors.text,
+    textShadowOffset: { width: 1.5, height: 1.5 },
+    textShadowRadius: 0,
   },
   weekNavRow: {
     flexDirection: 'row',
