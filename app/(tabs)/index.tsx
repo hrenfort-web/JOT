@@ -548,6 +548,7 @@ export default function HomeScreen() {
                 onPress={() => setWeekOffset(0)}
                 style={({ pressed }) => [styles.todayPill, pressed && styles.todayPillPressed]}
               >
+                <Ionicons name="arrow-undo" size={14} color={colors.accent} />
                 <Text style={styles.todayPillText}>Today</Text>
               </Pressable>
             ) : null}
@@ -766,6 +767,9 @@ const styles = StyleSheet.create({
   // and the prominent treatment makes the user's current week unmistakable
   // at a glance. Still tuned to not compete with the +Log time FAB.
   todayPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
