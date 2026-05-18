@@ -16,18 +16,31 @@ export const discovery: AuthSession.DiscoveryDocument = {
   revocationEndpoint: `${BQE_IDP_BASE}/connect/revocation`,
 };
 
-// BQE has migrated Jot's registration from Native App to Regular Web App.
-// Web App registrations have a client_secret and receive refresh tokens when
-// `offline_access` is in the scope set — this unlocks transparent session
-// continuity instead of the hourly re-login behavior the Native registration
-// forced. The previous "Native rejects offline_access as unauthorized_client"
-// comment is now stale; the Web App accepts it cleanly (verified via
-// bqe-test/auth.mjs against the live token endpoint).
+// BQE has migrated Jot's registration from Native App to Regular Web App,
+// which in principle supports refresh tokens via the `offline_access` scope.
+// All Phase 2 / Phase 3 plumbing (client_secret, Basic auth on the token
+// endpoint, raw-fetch exchange + refresh, 15s timeout, 5xx retry, revocation
+// on manual logout) is already in place and tested — it activates the moment
+// `offline_access` is in the SCOPES array AND BQE actually grants the scope.
+//
+// `offline_access` is TEMPORARILY OMITTED because BQE's authorize endpoint
+// currently rejects every request containing it for this specific client
+// (i7vwtYLmeXDGc1r_x6ijYigUev9ECEnq.apps.bqe.com), even though the portal
+// display lists the scope as available. Verified via Phase 3.5 diagnostic
+// on 2026-05-18 — BQE x-correlation-id of one rejected request:
+// fa765030-5960-419b-bf15-e10ab7837a14. Authorize endpoint redirects to
+// /idp/home/error?errorId=… whenever offline_access is present; redirects
+// to /idp/Account/Login (the success path) whenever it's absent. Filed with
+// Nasiha at BQE Support — Request Id 4001a001-0001-f700-b63f-84710c7967bb.
+//
+// When BQE enables `offline_access` server-side for this client, the only
+// code change required is adding 'offline_access' back to the SCOPES array
+// below — every other piece is already wired up.
 //
 // Trade-off accepted: client_secret ships in the JS bundle (.env →
 // EXPO_PUBLIC_BQE_CLIENT_SECRET). Acceptable for the single-tenant pilot;
 // a future server-side proxy is the long-term answer for multi-tenant.
-export const SCOPES = ['read:core', 'readwrite:core', 'openid', 'offline_access'];
+export const SCOPES = ['read:core', 'readwrite:core', 'openid'];
 
 export const redirectUri = AuthSession.makeRedirectUri({
   scheme: 'jot',
