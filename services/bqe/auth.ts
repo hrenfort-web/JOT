@@ -72,22 +72,33 @@ if (!clientSecret) {
 
 // BQE migrated Jot's registration to Regular Web App, which means the token
 // endpoint authenticates via HTTP Basic auth using clientId:clientSecret
-// (RFC 6749 §2.3.1). PKCE is kept on the authorize step as defense-in-depth
-// — BQE's own Swift sample sends both client_secret AND code_verifier on the
-// token exchange, so dual-stack is the canonical BQE pattern. expo-auth-
-// session still handles PKCE generation and the browser-pop; the token
-// endpoint round-trip is done with raw fetch (see exchangeCodeForTokens /
-// refreshAccessToken) because we have verified evidence (bqe-test/*.mjs)
-// that raw fetch + Basic auth works against BQE's Web App token endpoint,
-// and no evidence that expo-auth-session sends credentials in the shape
-// BQE's confidential-client registration expects.
+// (RFC 6749 §2.3.1). PKCE is DROPPED: BQE's Web App registration treats the
+// client as confidential and rejects PKCE on the authorize step with
+// `error=unauthorized_client` (observed live after the Phase 2 commit landed
+// with PKCE still enabled). Standard OAuth 2.1 separation: confidential
+// clients use client_secret, public clients use PKCE — not both.
+//
+// This contradicts BQE's Swift sample (which sends client_secret AND
+// code_verifier together), but that sample is a Native App reference and
+// doesn't apply to our Web App registration. The authoritative reference
+// for this registration is bqe-test/auth.mjs which explicitly omits PKCE
+// and has been verified end-to-end against the same /connect/token endpoint
+// — that's the shape we mirror.
+//
+// expo-auth-session still handles the browser-pop on the authorize step;
+// the token endpoint round-trip is done with raw fetch (see
+// exchangeCodeForTokens / refreshAccessToken) because we have verified
+// evidence (bqe-test/*.mjs) that raw fetch + Basic auth works against
+// BQE's Web App token endpoint, and no evidence that expo-auth-session
+// sends credentials in the shape BQE's confidential-client registration
+// expects.
 export function getAuthRequestConfig(): AuthSession.AuthRequestConfig {
   return {
     clientId,
     scopes: SCOPES,
     redirectUri,
     responseType: AuthSession.ResponseType.Code,
-    usePKCE: true,
+    usePKCE: false,
   };
 }
 
@@ -169,17 +180,12 @@ async function readErrorBody(res: Response): Promise<string> {
 
 export async function exchangeCodeForTokens(
   code: string,
-  codeVerifier?: string,
 ): Promise<StoredTokens> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     redirect_uri: redirectUri,
   });
-  // PKCE retained as defense-in-depth — BQE's Swift sample sends both
-  // client_secret (via Basic) AND code_verifier on the same exchange, and
-  // BQE accepts the combination.
-  if (codeVerifier) body.set('code_verifier', codeVerifier);
 
   const res = await fetch(discovery.tokenEndpoint as string, {
     method: 'POST',

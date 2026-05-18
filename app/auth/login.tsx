@@ -65,7 +65,7 @@ export default function LoginScreen() {
     }
 
     if (response.type === 'success') {
-      handleSuccess(response.params.code, request?.codeVerifier);
+      handleSuccess(response.params.code);
     } else if (response.type === 'error') {
       setError(response.error?.message ?? 'Authentication was rejected.');
       setLoading(false);
@@ -74,11 +74,11 @@ export default function LoginScreen() {
     }
   }, [response]);
 
-  const handleSuccess = async (code: string, codeVerifier?: string) => {
+  const handleSuccess = async (code: string) => {
     setLoading(true);
     setError(null);
     try {
-      const tokens = await exchangeCodeForTokens(code, codeVerifier);
+      const tokens = await exchangeCodeForTokens(code);
       const employee = await fetchCurrentEmployee(tokens);
       await login(tokens, employee);
     } catch (e) {
