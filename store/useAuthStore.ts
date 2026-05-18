@@ -7,6 +7,7 @@ import {
   loadStoredUser,
   loadTokens,
   refreshAccessToken,
+  revokeTokens,
   storeCurrentUser,
   storeTokens,
 } from '../services/bqe/auth';
@@ -156,6 +157,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { useSyncStore } = require('./useSyncStore') as typeof import('./useSyncStore');
     useSyncStore.getState().cancelSync();
+
+    // Revoke the BQE session on user-initiated logout only. session_expired
+    // skips revocation (the token is already invalid; BQE would return an
+    // error and we'd log noise). Fire-and-forget — local logout must not
+    // wait on a network round-trip or be blocked if BQE is unreachable.
+    if (reason === 'manual') {
+      const { tokens } = get();
+      if (tokens?.accessToken) {
+        void revokeTokens(tokens.accessToken, tokens.refreshToken);
+      }
+    }
 
     // Always run all three cleanups so switching between real and demo
     // mode never leaves stale tokens in SecureStore, a stale persisted

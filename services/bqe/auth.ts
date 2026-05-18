@@ -16,19 +16,18 @@ export const discovery: AuthSession.DiscoveryDocument = {
   revocationEndpoint: `${BQE_IDP_BASE}/connect/revocation`,
 };
 
-// `offline_access` is intentionally omitted. BQE support confirmed Native apps
-// don't get refresh tokens for security reasons — that scope causes BQE to
-// reject the auth request as `unauthorized_client`. Trade-off: access tokens
-// expire ~hourly, after which the user is bounced back to the login screen
-// (the 401 interceptor in client.ts handles this gracefully via
-// logout('session_expired')).
+// BQE has migrated Jot's registration from Native App to Regular Web App.
+// Web App registrations have a client_secret and receive refresh tokens when
+// `offline_access` is in the scope set — this unlocks transparent session
+// continuity instead of the hourly re-login behavior the Native registration
+// forced. The previous "Native rejects offline_access as unauthorized_client"
+// comment is now stale; the Web App accepts it cleanly (verified via
+// bqe-test/auth.mjs against the live token endpoint).
 //
-// TODO: Decide before broader rollout whether to:
-//   (A) Accept hourly re-auth — simpler, no infra changes, current behavior.
-//   (B) Stand up a server-side proxy (e.g. Supabase Edge Function) registered
-//       as a Regular Web App in BQE. The server holds the refresh token, the
-//       client gets short-lived session JWTs. Adds infra; removes re-auth pain.
-export const SCOPES = ['read:core', 'readwrite:core', 'openid'];
+// Trade-off accepted: client_secret ships in the JS bundle (.env →
+// EXPO_PUBLIC_BQE_CLIENT_SECRET). Acceptable for the single-tenant pilot;
+// a future server-side proxy is the long-term answer for multi-tenant.
+export const SCOPES = ['read:core', 'readwrite:core', 'openid', 'offline_access'];
 
 export const redirectUri = AuthSession.makeRedirectUri({
   scheme: 'jot',
@@ -62,11 +61,26 @@ export interface StoredTokens {
 }
 
 const clientId = process.env.EXPO_PUBLIC_BQE_CLIENT_ID ?? '';
+const clientSecret = process.env.EXPO_PUBLIC_BQE_CLIENT_SECRET ?? '';
 
-// BQE Native apps are public OAuth clients — no client_secret. PKCE alone
-// authenticates the token exchange. Earlier builds plumbed a clientSecret
-// env var through, but it was always empty in practice and BQE ignored it.
-// Removed to stop shipping a placeholder env var into the JS bundle.
+if (!clientSecret) {
+  console.warn(
+    '[jot:auth] EXPO_PUBLIC_BQE_CLIENT_SECRET is empty — token exchange and refresh will fail. ' +
+      'Set it in .env (Web App registration requires the client secret via HTTP Basic auth).',
+  );
+}
+
+// BQE migrated Jot's registration to Regular Web App, which means the token
+// endpoint authenticates via HTTP Basic auth using clientId:clientSecret
+// (RFC 6749 §2.3.1). PKCE is kept on the authorize step as defense-in-depth
+// — BQE's own Swift sample sends both client_secret AND code_verifier on the
+// token exchange, so dual-stack is the canonical BQE pattern. expo-auth-
+// session still handles PKCE generation and the browser-pop; the token
+// endpoint round-trip is done with raw fetch (see exchangeCodeForTokens /
+// refreshAccessToken) because we have verified evidence (bqe-test/*.mjs)
+// that raw fetch + Basic auth works against BQE's Web App token endpoint,
+// and no evidence that expo-auth-session sends credentials in the shape
+// BQE's confidential-client registration expects.
 export function getAuthRequestConfig(): AuthSession.AuthRequestConfig {
   return {
     clientId,
@@ -117,20 +131,73 @@ export async function fetchUserInfo(
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Token endpoint round-trips
+// ---------------------------------------------------------------------------
+// All token-endpoint POSTs go through raw fetch with HTTP Basic auth, modeled
+// on bqe-test/{auth,refresh}.mjs (those scripts are verified working against
+// BQE's Web App registration). expo-auth-session's exchangeCodeAsync /
+// refreshAsync are deliberately NOT used here — they're untested against
+// BQE's confidential-client credential shape, and the Node scripts give us
+// known-good evidence to mirror.
+
+export class RefreshTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Token refresh timed out after ${timeoutMs}ms`);
+    this.name = 'RefreshTimeoutError';
+  }
+}
+
+const REFRESH_TIMEOUT_MS = 15_000;
+const REFRESH_RETRY_DELAY_MS = 500;
+
+function basicAuthHeader(): string {
+  // btoa is available in React Native / Hermes. The raw "id:secret" string
+  // is ASCII (BQE client IDs are alphanumeric + dots; secrets are
+  // base64url-style strings) so a UTF-16 → btoa round-trip is safe.
+  const credentials = `${clientId}:${clientSecret}`;
+  return `Basic ${btoa(credentials)}`;
+}
+
+async function readErrorBody(res: Response): Promise<string> {
+  try {
+    return (await res.text()).slice(0, 500);
+  } catch {
+    return '<unreadable body>';
+  }
+}
+
 export async function exchangeCodeForTokens(
   code: string,
   codeVerifier?: string,
 ): Promise<StoredTokens> {
-  const result = await AuthSession.exchangeCodeAsync(
-    {
-      clientId,
-      code,
-      redirectUri,
-      extraParams: codeVerifier ? { code_verifier: codeVerifier } : undefined,
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri,
+  });
+  // PKCE retained as defense-in-depth — BQE's Swift sample sends both
+  // client_secret (via Basic) AND code_verifier on the same exchange, and
+  // BQE accepts the combination.
+  if (codeVerifier) body.set('code_verifier', codeVerifier);
+
+  const res = await fetch(discovery.tokenEndpoint as string, {
+    method: 'POST',
+    headers: {
+      authorization: basicAuthHeader(),
+      'content-type': 'application/x-www-form-urlencoded',
+      accept: 'application/json',
     },
-    discovery,
-  );
-  const stored = tokenResponseToStored({ ...result, ...(result as any).rawResponse });
+    body: body.toString(),
+  });
+
+  if (!res.ok) {
+    const text = await readErrorBody(res);
+    throw new Error(`Token exchange failed (${res.status}): ${text}`);
+  }
+
+  const raw = (await res.json()) as Record<string, unknown>;
+  const stored = tokenResponseToStored(raw);
   if (!stored.endpoint) {
     throw new Error('Token response missing endpoint field');
   }
@@ -138,11 +205,128 @@ export async function exchangeCodeForTokens(
 }
 
 export async function refreshAccessToken(refreshToken: string): Promise<StoredTokens> {
-  const result = await AuthSession.refreshAsync(
-    { clientId, refreshToken, scopes: SCOPES },
-    discovery,
-  );
-  return tokenResponseToStored({ ...result, ...(result as any).rawResponse });
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+
+  // One-retry-on-5xx wrapper — the request-level retry budget in client.ts
+  // covers BQE API endpoints, NOT the token endpoint. Without this, a
+  // transient 503 on /connect/token forces an immediate logout. Cap is hard
+  // at one retry: looping a hung refresh path is worse than a clean failure.
+  const attempt = async (): Promise<Response> => {
+    const fetchPromise = fetch(discovery.tokenEndpoint as string, {
+      method: 'POST',
+      headers: {
+        authorization: basicAuthHeader(),
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'application/json',
+      },
+      body: body.toString(),
+    });
+
+    // 15s timeout — without this, a hung token endpoint blocks the
+    // single-flight refresh promise in client.ts forever, which in turn
+    // blocks every queued retry. Reject with RefreshTimeoutError so callers
+    // can distinguish "BQE is slow" from "BQE rejected our refresh".
+    return await new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new RefreshTimeoutError(REFRESH_TIMEOUT_MS));
+      }, REFRESH_TIMEOUT_MS);
+      fetchPromise.then(
+        (res) => {
+          clearTimeout(timer);
+          resolve(res);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      );
+    });
+  };
+
+  let res = await attempt();
+  if (res.status >= 500 && res.status < 600) {
+    console.warn(
+      `[jot:auth] refresh got ${res.status} from token endpoint — retrying once after ${REFRESH_RETRY_DELAY_MS}ms`,
+    );
+    await new Promise((r) => setTimeout(r, REFRESH_RETRY_DELAY_MS));
+    res = await attempt();
+  }
+
+  if (!res.ok) {
+    const text = await readErrorBody(res);
+    throw new Error(`Token refresh failed (${res.status}): ${text}`);
+  }
+
+  const raw = (await res.json()) as Record<string, unknown>;
+  const stored = tokenResponseToStored(raw);
+  // BQE may not echo refresh_token back if it isn't rotating it on this
+  // exchange — preserve the caller's previous refresh_token in that case.
+  // Mirror bqe-test/refresh.mjs:77.
+  if (!stored.refreshToken) {
+    stored.refreshToken = refreshToken;
+  }
+  // BQE may also not echo `endpoint` on refresh — the store-level merge in
+  // useAuthStore.refreshTokens preserves it, but defend in the helper too
+  // so any future caller path stays correct.
+  // (No `endpoint`-fallback here: stored.endpoint already comes from
+  // tokenResponseToStored, which returns '' if absent — the store layer
+  // preserves the prior value when stored.endpoint is empty.)
+  return stored;
+}
+
+/**
+ * Fire-and-forget revocation of the user's tokens at BQE. Called from
+ * logout('manual') only — session_expired logouts skip revocation because
+ * the token is already invalid. Errors are caught and logged; never thrown
+ * to the caller. The local logout proceeds regardless.
+ *
+ * Prefers revoking the refresh_token (broader: kills the entire session) over
+ * the access_token (just kills the current short-lived token).
+ */
+export async function revokeTokens(
+  accessToken: string,
+  refreshToken?: string,
+): Promise<void> {
+  // Discovery doesn't always carry revocationEndpoint at runtime; fall back
+  // to the BQE-known URL. Both paths target the same endpoint string today.
+  const url =
+    discovery.revocationEndpoint ?? `${BQE_IDP_BASE}/connect/revocation`;
+
+  const targetToken = refreshToken ?? accessToken;
+  const tokenTypeHint = refreshToken ? 'refresh_token' : 'access_token';
+
+  const body = new URLSearchParams({
+    token: targetToken,
+    token_type_hint: tokenTypeHint,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: basicAuthHeader(),
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'application/json',
+      },
+      body: body.toString(),
+    });
+    if (!res.ok) {
+      const text = await readErrorBody(res);
+      console.warn(
+        `[jot:auth] revokeTokens non-2xx (${res.status}) — local logout proceeds: ${text}`,
+      );
+    } else {
+      console.log(`[jot:auth] revokeTokens OK (${tokenTypeHint})`);
+    }
+  } catch (err) {
+    console.warn(
+      '[jot:auth] revokeTokens failed (non-fatal):',
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 /**
