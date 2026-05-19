@@ -393,13 +393,13 @@ export default function RootLayout() {
         options={SCREEN_OPTIONS_ENTRY_HOURS}
       />,
       <Stack.Screen
-        key="scan/processing"
-        name="scan/processing"
+        key="scan-processing"
+        name="scan-processing"
         options={SCREEN_OPTIONS_SCAN_PROCESSING}
       />,
       <Stack.Screen
-        key="scan/review"
-        name="scan/review"
+        key="scan-review"
+        name="scan-review"
         options={SCREEN_OPTIONS_SCAN_REVIEW}
       />,
       <Stack.Screen

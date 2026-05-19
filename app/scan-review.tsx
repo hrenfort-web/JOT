@@ -1,57 +1,83 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { Stack, useNavigation, useRouter } from 'expo-router';
-import { usePreventRemove } from '@react-navigation/native';
+import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors } from '../../theme';
-import { EmptyState } from '../../components/EmptyState';
+import { colors } from '../theme';
+import { EmptyState } from '../components/EmptyState';
 import {
   EditorValue,
   ReviewEntryEditor,
-} from '../../components/ReviewEntryEditor';
-import { useAuthStore } from '../../store/useAuthStore';
-import { useProjectStore } from '../../store/useProjectStore';
-import { useEntryStore } from '../../store/useEntryStore';
-import { useScanStore, type ReviewEntry } from '../../store/useScanStore';
-import { useToastStore } from '../../store/useToastStore';
+} from '../components/ReviewEntryEditor';
+import { useAuthStore } from '../store/useAuthStore';
+import { useProjectStore } from '../store/useProjectStore';
+import { useEntryStore } from '../store/useEntryStore';
+import { useScanStore, type ReviewEntry } from '../store/useScanStore';
+import { useToastStore } from '../store/useToastStore';
 import {
   formatHours,
   getMonday,
   getSunday,
   getWeekDays,
   toIsoDay,
-} from '../../utils/dateHelpers';
-import { phaseMeta } from '../../utils/phaseMeta';
-import type { ParsedEntry, ParsedTimesheet } from '../../services/ai/scanner';
+} from '../utils/dateHelpers';
+import { phaseMeta } from '../utils/phaseMeta';
+import type { ParsedEntry, ParsedTimesheet } from '../services/ai/scanner';
 import {
   validateEntryDate,
   validateHours,
   validateMemo,
   validateProjectAndPhase,
-} from '../../utils/validation';
-import { formatError, logError } from '../../services/errors';
-import { resolveActivityForEntry } from '../../services/activitySelection/resolver';
+} from '../utils/validation';
+import { formatError, logError } from '../services/errors';
+import { resolveActivityForEntry } from '../services/activitySelection/resolver';
 import {
   buildSessionId,
   logScanSession,
   type SubmittedEntry as LogSubmittedEntry,
-} from '../../services/analytics/scanCorrections';
+} from '../services/analytics/scanCorrections';
 
 const WEEK_TOTAL_LOW = 30;
 const WEEK_TOTAL_HIGH = 50;
 
+// Custom back button rendered via Stack.Screen's headerLeft. Replaces the
+// native back chevron because iOS 26 native-stack drops usePreventRemove
+// hook subscriptions after the first Alert dismiss cycle — Phase 3c device
+// verification confirmed the callback simply stops firing on the second
+// back tap, with no way to recover from inside the hook. Owning the back
+// affordance ourselves sidesteps every native-stack edge case in one move.
+function CustomBackButton({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Back"
+      hitSlop={12}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <Text style={{ fontSize: 28, color: colors.accent, marginRight: 4, lineHeight: 28 }}>
+        ‹
+      </Text>
+      <Text style={{ fontSize: 17, color: colors.accent, fontWeight: '500' }}>Back</Text>
+    </Pressable>
+  );
+}
+
 export default function ReviewScreen() {
   const router = useRouter();
-  const navigation = useNavigation();
   const parsed = useScanStore((s) => s.parsed);
   const clearAll = useScanStore((s) => s.clearAll);
   const setReviewEntries = useScanStore((s) => s.setReviewEntries);
@@ -60,6 +86,14 @@ export default function ReviewScreen() {
   // Flipped to true right before the success branch dispatches navigation,
   // never reset (the screen is unmounting anyway).
   const hasSubmittedRef = useRef(false);
+  // Set true at the start of every dismissReview() call so the cascade
+  // safety effect below (router.replace('/scan') on !parsed) doesn't fire
+  // when WE are the reason parsed went null. The cascade still serves its
+  // intended purpose — bouncing the user to the Scan tab when they reach
+  // /scan-review without a parsed scan (deep link, dev hot-reload) — but
+  // it must not race our own dismiss-to-home when submit/Discard runs
+  // clearAll() and then dispatches navigation.
+  const isDismissingRef = useRef(false);
   const flatProjects = useProjectStore((s) => s.flatProjects);
   const user = useAuthStore((s) => s.user);
   const submitParsedBatch = useEntryStore((s) => s.submitParsedBatch);
@@ -96,49 +130,15 @@ export default function ReviewScreen() {
     setReviewEntries(entries);
   }, [entries, setReviewEntries]);
 
-  // Confirm-before-discard interception. usePreventRemove is the
-  // native-stack-aware hook (replaces the old beforeRemove listener which
-  // fired AFTER the native pop on iOS); it gates the gesture itself when
-  // its first arg is truthy. Catches back chevron, hardware back
-  // (Android), swipe-back (iOS), and any other Stack pop.
-  //
-  // Condition uses `entries.length > 0` directly — entries is reactive
-  // state, so the hook re-evaluates as the user adds/removes rows. No
-  // ref-mirror needed. The submit-vs-user discrimination still uses the
-  // ref because the callback's synchronous read is what matters there
-  // (and the ref preserves the cascade-nav handling: hasSubmittedRef is
-  // set true BEFORE clearAll, so the `if (!parsed)` cascade also passes
-  // through silently via the dispatch branch below).
-  usePreventRemove(entries.length > 0, ({ data }) => {
-    if (hasSubmittedRef.current) {
-      navigation.dispatch(data.action);
-      return;
-    }
-    // 100ms setTimeout defeats an iOS Alert-presentation timing race seen
-    // after the inline edit form closes. When usePreventRemove fires
-    // immediately after a UIKit-backed picker / form dismisses, the
-    // previous presentation context hasn't fully released and Alert.alert
-    // silently no-ops — chevron tap registers but the modal never appears
-    // and the screen stays stuck. The 100ms gap lets iOS finish releasing
-    // the prior context. Perceptible-but-acceptable trade.
-    setTimeout(() => {
-      Alert.alert(
-        'Discard scan?',
-        'Your edits will be lost.',
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => {} },
-          {
-            text: 'Discard',
-            style: 'destructive',
-            onPress: () => {
-              useScanStore.getState().clearAll();
-              navigation.dispatch(data.action);
-            },
-          },
-        ],
-      );
-    }, 100);
-  });
+  // Discard-confirmation overlay. State-controlled JSX (rendered at the
+  // bottom of the screen body) instead of Alert.alert + usePreventRemove,
+  // which broke on iOS 26 native-stack: the hook subscription dropped
+  // after the first Alert dismiss cycle so subsequent back taps couldn't
+  // be intercepted. Owning both the back affordance (CustomBackButton)
+  // and the modal (in-app overlay) removes every native-stack edge case
+  // from the path.
+  const [discardOverlayVisible, setDiscardOverlayVisible] = useState(false);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingDay, setAddingDay] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -165,8 +165,14 @@ export default function ReviewScreen() {
     overallAiConfidenceRef.current = parsed.overallConfidence;
   }, [parsed]);
 
+  // Cascade safety: if the user lands on /scan-review without a parsed
+  // scan in the store (deep link, dev hot-reload that wiped state),
+  // bounce them to the Scan tab so they can capture a fresh image. Guard
+  // on isDismissingRef so this effect doesn't fire when WE just ran
+  // clearAll() as part of an intentional dismiss — that path races the
+  // dismiss-to-home and the user ends up on Scan capture instead of home.
   useEffect(() => {
-    if (!parsed) {
+    if (!parsed && !isDismissingRef.current) {
       router.replace('/scan');
     }
   }, [parsed, router]);
@@ -197,6 +203,54 @@ export default function ReviewScreen() {
       </View>
     );
   }
+
+  // Stack pop helper — same pattern HeaderHomeButton uses for the entry
+  // flow. Works reliably here now because the Phase 3i rename
+  // (scan/processing → scan-processing, scan/review → scan-review)
+  // removed the URL-prefix collision with the /scan tab. Before the
+  // rename, dismissAll from /scan/review popped back to /scan (the Scan
+  // tab) rather than past (tabs) to /, because expo-router treats
+  // /scan/* as descendants of the /scan route. With the new flat URLs
+  // (/scan-processing, /scan-review), neither shares a prefix with
+  // /scan, so dismissAll pops cleanly through to (tabs) and replace('/')
+  // resolves to the home tab as the (tabs) index. Used by
+  // handleBackPress (empty-entries + submit-bypass branches) and the
+  // discard overlay's Discard button. The submit-success path uses the
+  // same pattern inline.
+  const dismissReview = () => {
+    // Mark intent BEFORE any router call so the cascade safety effect
+    // sees the flag on its next render-tick read and bails. Order is
+    // load-bearing: clearing parsed (in the Discard path) re-renders
+    // the screen, which fires the cascade effect, which would race
+    // the dismiss if isDismissingRef weren't already true.
+    isDismissingRef.current = true;
+    // router.replace('/') directly — bypasses the canDismiss/dismissAll
+    // pair we had through Phase 3i/3j because dismissAll preserves the
+    // last-active tab in the (tabs) navigator. The user started this
+    // flow from the Scan tab, so dismissAll lands them on Scan UI even
+    // when the Stack frames are cleared correctly. replace('/') targets
+    // the home route directly, which forces the (tabs) navigator to
+    // activate its index (home) tab.
+    router.replace('/');
+  };
+
+  // Custom back handler. Three branches:
+  //   1. Submit-driven (hasSubmittedRef true): dismiss immediately —
+  //      mirrors the cascade-pass-through that usePreventRemove used to
+  //      handle for the `if (!parsed)` effect post-clearAll.
+  //   2. Has entries: show the discard overlay; user picks Cancel/Discard.
+  //   3. Empty entries: dismiss immediately — nothing to lose.
+  const handleBackPress = () => {
+    if (hasSubmittedRef.current) {
+      dismissReview();
+      return;
+    }
+    if (entries.length > 0) {
+      setDiscardOverlayVisible(true);
+      return;
+    }
+    dismissReview();
+  };
 
   const updateEntry = (id: string, patch: Partial<ReviewEntry>) =>
     setEntries((es) => es.map((e) => (e.id === id ? { ...e, ...patch } : e)));
@@ -325,10 +379,12 @@ export default function ReviewScreen() {
 
     if (result.ok === true) {
       // Full success — either everything posted, or everything was queued
-      // offline. Either way the review screen is done. Set the flag BEFORE
-      // clearAll() because clearAll nulls `parsed`, which fires the
-      // !parsed → router.replace('/scan') effect on the next render; that
-      // cascade-triggered nav also hits beforeRemove and must pass through.
+      // offline. Either way the review screen is done. hasSubmittedRef is
+      // set true so handleBackPress's user-tap branch can no longer fire
+      // the discard overlay (race window between toast and screen
+      // unmount). dismissReview() handles isDismissingRef + the actual
+      // router dispatch; clearAll() runs first so the scan store is
+      // cleaned before the next render.
       hasSubmittedRef.current = true;
       if (result.queued) {
         showToast(`${result.count} saved locally — will sync when online`, 'info');
@@ -336,11 +392,7 @@ export default function ReviewScreen() {
         showToast(`${result.count} entries submitted`, 'success');
       }
       clearAll();
-      if (router.canDismiss?.()) {
-        router.dismissAll();
-      } else {
-        router.replace('/');
-      }
+      dismissReview();
       return;
     }
 
@@ -416,24 +468,15 @@ export default function ReviewScreen() {
       <Stack.Screen
         options={{
           title: 'Review & submit',
-          // Burnt-orange tint on the back chevron so it reads as a
-          // tappable affordance against the cream header rather than
-          // blending into the neutral text. Same accent used elsewhere
-          // (CTAs, period accents); keeps the scan flow's exit gesture
-          // visually findable.
-          headerTintColor: colors.accent,
-          // 'Back' label + 'default' display mode together render the
-          // chevron + label combo iOS users expect. The prior empty
-          // headerBackTitle + 'minimal' displayMode suppressed the label
-          // entirely, leaving just a faint chevron — easy to miss when
-          // the eye is anchored on the submit pill at bottom.
-          headerBackTitle: 'Back',
-          headerBackButtonDisplayMode: 'default',
-          // iOS-only: disable the long-press menu on the back chevron so
-          // the user can't skip past the discard-confirmation gate by
-          // long-pressing back and picking a stack-root entry. Harmless
-          // on Android.
-          headerBackButtonMenuEnabled: false,
+          // Custom back affordance so the discard-confirmation gate is
+          // 100% owned by our JSX — no native chevron, no Alert.alert, no
+          // usePreventRemove. iOS 26 native-stack lost the preventRemove
+          // hook subscription after the first Alert dismiss cycle; this
+          // is the workaround.
+          headerLeft: () => <CustomBackButton onPress={handleBackPress} />,
+          // Disable swipe-back so there's no second uncontrolled exit
+          // path that bypasses CustomBackButton.
+          gestureEnabled: false,
         }}
       />
 
@@ -599,6 +642,52 @@ export default function ReviewScreen() {
           )}
         </Pressable>
       </ScrollView>
+
+      {/*
+        Discard-confirmation overlay. Rendered last so absolute positioning
+        sits above the ScrollView. Visibility is component state — no
+        UIKit presentation context, no native modal lifecycle, just a
+        rendered View tree that mounts/unmounts with `discardOverlayVisible`.
+        See the comment above the state declaration for the iOS 26
+        native-stack background.
+      */}
+      {discardOverlayVisible ? (
+        <View style={styles.discardScrim}>
+          <View style={styles.discardCard}>
+            <Text style={styles.discardTitle}>Discard scan?</Text>
+            <Text style={styles.discardMessage}>Your edits will be lost.</Text>
+            <View style={styles.discardButtonRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+                onPress={() => setDiscardOverlayVisible(false)}
+                style={({ pressed }) => [
+                  styles.discardButton,
+                  pressed && styles.discardButtonPressed,
+                ]}
+              >
+                <Text style={styles.discardCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Discard"
+                onPress={() => {
+                  useScanStore.getState().clearAll();
+                  setDiscardOverlayVisible(false);
+                  dismissReview();
+                }}
+                style={({ pressed }) => [
+                  styles.discardButton,
+                  styles.discardButtonDestructive,
+                  pressed && styles.discardButtonPressed,
+                ]}
+              >
+                <Text style={styles.discardDestructiveText}>Discard</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1014,5 +1103,80 @@ const styles = StyleSheet.create({
   },
   submitTextDisabled: {
     color: colors.disabledText,
+  },
+  // ── Discard-confirmation overlay ──────────────────────────────────
+  // In-app modal substitute for Alert.alert. Uses the screen's own JSX
+  // tree so iOS native presentation context can't interfere with
+  // dismiss / re-show cycles (the failure mode usePreventRemove + Alert
+  // hit in Phase 3c on iOS 26 native-stack).
+  discardScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+  // Cream card matches Theme B surface convention used elsewhere on the
+  // page (summary, total bar). Drop shadow lifts it above the scrim.
+  discardCard: {
+    width: '100%',
+    maxWidth: 320,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  discardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  discardMessage: {
+    fontSize: 15,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  discardButtonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  discardButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  discardButtonDestructive: {
+    backgroundColor: colors.accent,
+  },
+  discardButtonPressed: {
+    opacity: 0.7,
+  },
+  discardCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  // White-on-accent pair already used by the submit button above; same
+  // colors.surface token for visual consistency.
+  discardDestructiveText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.surface,
   },
 });

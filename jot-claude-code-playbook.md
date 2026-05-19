@@ -52,8 +52,8 @@ Create the tab bar with 3 tabs:
 Also create these stack screens (not in tabs):
 - app/entry/[projectId].tsx — Phase selection (placeholder)
 - app/entry/hours.tsx — Hour entry (placeholder)
-- app/scan/processing.tsx — placeholder
-- app/scan/review.tsx — placeholder  
+- app/scan-processing.tsx — placeholder
+- app/scan-review.tsx — placeholder  
 - app/auth/login.tsx — placeholder
 
 Use a clean, minimal design system:
@@ -401,7 +401,7 @@ Requirements:
    - Take photo or select from library
    - Compress image to reasonable size (max 1MB) for API transmission
    - Convert to base64
-   - Navigate to app/scan/processing.tsx, passing the base64 image data
+   - Navigate to app/scan-processing.tsx, passing the base64 image data
 
 4. Permissions:
    - Request camera permission on first use
@@ -446,7 +446,7 @@ Requirements:
    - For each parent project, includes: full name, common abbreviations (first letters of each word, first word, etc.), all phase children with their codes and IDs
    - This is what lets the AI match "Smith DD" to the correct phase projectId
 
-3. Processing screen (app/scan/processing.tsx):
+3. Processing screen (app/scan-processing.tsx):
    - Receives base64 image from camera screen
    - Shows a clean loading UI with animated spinner
    - Step indicators that update as processing happens:
@@ -479,7 +479,7 @@ Requirements:
 ```
 Read timecard-app-spec.md section 4.3 — the Review screen after AI parsing.
 
-Build the scan review screen at app/scan/review.tsx.
+Build the scan review screen at app/scan-review.tsx.
 
 Requirements:
 

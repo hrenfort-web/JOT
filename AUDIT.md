@@ -75,7 +75,7 @@ Severity legend:
 ### 🟠 P-1: No `FlatList` anywhere — all lists use `ScrollView`
 - **Where**: confirmed via `Grep "FlatList"` → 0 hits, `Grep "ScrollView"` → 7 files
 - **Worst offender**: `app/entry/picker.tsx:68` ScrollView renders the entire `tree` (3,226 projects on Studio G's tenant) when the search input is empty. Every project is a `Pressable` with an icon and 1–2 text rows. Mounting cost on first open is real.
-- **Other heavy lists**: `app/entry/[projectId].tsx` (PhaseList rows), `app/scan/review.tsx` (entry rows), `components/ProjectPickerModal.tsx`
+- **Other heavy lists**: `app/entry/[projectId].tsx` (PhaseList rows), `app/scan-review.tsx` (entry rows), `components/ProjectPickerModal.tsx`
 - **Suggested fix**: convert the picker ScrollView to a FlatList with `keyExtractor`, `getItemLayout` (rows are fixed height), and `windowSize={5}`. ProjectCard list on home is already capped by bucket logic — lower priority.
 
 ### 🟡 P-2: Inline arrow functions in list-row props

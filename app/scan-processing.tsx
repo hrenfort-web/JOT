@@ -11,16 +11,16 @@ import {
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors } from '../../theme';
-import { useScanStore } from '../../store/useScanStore';
-import { useProjectStore } from '../../store/useProjectStore';
-import { useAuthStore } from '../../store/useAuthStore';
-import { buildScanLookup } from '../../services/ai/matcher';
-import { parseTimesheetImage } from '../../services/ai/scanner';
-import { loadLocalEntriesInRange } from '../../services/bqe/timeentry';
-import { logError } from '../../services/errors';
-import { DEFAULT_RECENT_DAYS } from '../../utils/projectSort';
-import type { LocalTimeEntry } from '../../db/schema';
+import { colors } from '../theme';
+import { useScanStore } from '../store/useScanStore';
+import { useProjectStore } from '../store/useProjectStore';
+import { useAuthStore } from '../store/useAuthStore';
+import { buildScanLookup } from '../services/ai/matcher';
+import { parseTimesheetImage } from '../services/ai/scanner';
+import { loadLocalEntriesInRange } from '../services/bqe/timeentry';
+import { logError } from '../services/errors';
+import { DEFAULT_RECENT_DAYS } from '../utils/projectSort';
+import type { LocalTimeEntry } from '../db/schema';
 
 const STEPS = [
   'Reading your notes…',
@@ -124,7 +124,7 @@ export default function ProcessingScreen() {
         setStepIndex(STEPS.length - 1);
         setDone(true);
         setTimeout(() => {
-          if (!cancelled) router.replace('/scan/review');
+          if (!cancelled) router.replace('/scan-review');
         }, 250);
       } catch (e) {
         if (cancelled) return;

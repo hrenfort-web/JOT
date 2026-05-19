@@ -52,7 +52,7 @@ export default function ScanScreen() {
         source: 'camera',
         capturedAt: Date.now(),
       });
-      router.push('/scan/processing');
+      router.push('/scan-processing');
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not capture photo';
       showToast(message, 'error');
@@ -82,7 +82,7 @@ export default function ScanScreen() {
         source: 'library',
         capturedAt: Date.now(),
       });
-      router.push('/scan/processing');
+      router.push('/scan-processing');
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not load photo';
       showToast(message, 'error');

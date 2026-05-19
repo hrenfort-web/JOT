@@ -11,7 +11,7 @@ export interface CapturedImage {
 
 /**
  * Row in the scan review screen's editable list. Hoisted here from
- * app/scan/review.tsx so the in-memory draft slot below can hold it without
+ * app/scan-review.tsx so the in-memory draft slot below can hold it without
  * pulling a screen-file type into the store layer. Shape is unchanged from
  * the original local definition; consumers re-import from this module.
  */
