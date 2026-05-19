@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors } from '../../theme';
@@ -19,7 +21,7 @@ import {
 import { useAuthStore } from '../../store/useAuthStore';
 import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
-import { useScanStore } from '../../store/useScanStore';
+import { useScanStore, type ReviewEntry } from '../../store/useScanStore';
 import { useToastStore } from '../../store/useToastStore';
 import {
   formatHours,
@@ -29,7 +31,7 @@ import {
   toIsoDay,
 } from '../../utils/dateHelpers';
 import { phaseMeta } from '../../utils/phaseMeta';
-import type { ParsedEntry, ParsedFlag, ParsedTimesheet } from '../../services/ai/scanner';
+import type { ParsedEntry, ParsedTimesheet } from '../../services/ai/scanner';
 import {
   validateEntryDate,
   validateHours,
@@ -47,32 +49,17 @@ import {
 const WEEK_TOTAL_LOW = 30;
 const WEEK_TOTAL_HIGH = 50;
 
-interface ReviewEntry {
-  id: string;
-  day: string;
-  projectId: string | null;
-  phaseProjectId: string | null;
-  hours: number;
-  memo: string;
-  flag: ParsedFlag | null;
-  source: 'parsed' | 'manual';
-  // BQE rejection message captured from the per-entry fallback in
-  // `submitParsedBatch`. null on a fresh entry; populated after a
-  // partial-submit pass when the BQE call rejected this specific row.
-  // Cleared when the user edits the entry (any field change indicates
-  // they're addressing the rejection).
-  submitError: string | null;
-  // LocalTimeEntry id for this entry's last failed-submit attempt. Used
-  // when the user taps "Retry failed" so `submitParsedBatch` can clean
-  // up the stale failed SQLite row before reinserting. null = never
-  // attempted yet (don't pass to the dedupe path).
-  lastLocalId: number | null;
-}
-
 export default function ReviewScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const parsed = useScanStore((s) => s.parsed);
   const clearAll = useScanStore((s) => s.clearAll);
+  const setReviewEntries = useScanStore((s) => s.setReviewEntries);
+  // Submit-driven nav must pass through the beforeRemove listener silently
+  // — we don't want a "Discard scan?" prompt on top of a "Submitted" toast.
+  // Flipped to true right before the success branch dispatches navigation,
+  // never reset (the screen is unmounting anyway).
+  const hasSubmittedRef = useRef(false);
   const flatProjects = useProjectStore((s) => s.flatProjects);
   const user = useAuthStore((s) => s.user);
   const submitParsedBatch = useEntryStore((s) => s.submitParsedBatch);
@@ -88,9 +75,70 @@ export default function ReviewScreen() {
     [flatProjects],
   );
 
-  const [entries, setEntries] = useState<ReviewEntry[]>(() =>
-    parsed ? parsedToReview(parsed, monday) : [],
-  );
+  // Draft-restore on mount: if the user previously edited the review list
+  // and navigated away, useScanStore.reviewEntries holds their edits. Re-
+  // hydrate from there; fall back to the AI's fresh parsedToReview output
+  // for a brand-new scan. Evaluated once via lazy useState — no
+  // subscription, so subsequent store updates from this same component's
+  // write effect don't loop back as state churn.
+  const [entries, setEntries] = useState<ReviewEntry[]>(() => {
+    const storedDraft = useScanStore.getState().reviewEntries;
+    if (storedDraft && storedDraft.length > 0) return storedDraft;
+    return parsed ? parsedToReview(parsed, monday) : [];
+  });
+
+  // Draft-write effect: persist every edit back to the scan store so a
+  // navigation-away-and-back restores the user's in-progress corrections
+  // rather than reverting to the AI's first guess. Cheap per-edit write
+  // (in-memory zustand set; no DB round-trip). clearAll() on submit
+  // success nulls this slot, so the next scan starts clean.
+  useEffect(() => {
+    setReviewEntries(entries);
+  }, [entries, setReviewEntries]);
+
+  // Confirm-before-discard interception. usePreventRemove is the
+  // native-stack-aware hook (replaces the old beforeRemove listener which
+  // fired AFTER the native pop on iOS); it gates the gesture itself when
+  // its first arg is truthy. Catches back chevron, hardware back
+  // (Android), swipe-back (iOS), and any other Stack pop.
+  //
+  // Condition uses `entries.length > 0` directly — entries is reactive
+  // state, so the hook re-evaluates as the user adds/removes rows. No
+  // ref-mirror needed. The submit-vs-user discrimination still uses the
+  // ref because the callback's synchronous read is what matters there
+  // (and the ref preserves the cascade-nav handling: hasSubmittedRef is
+  // set true BEFORE clearAll, so the `if (!parsed)` cascade also passes
+  // through silently via the dispatch branch below).
+  usePreventRemove(entries.length > 0, ({ data }) => {
+    if (hasSubmittedRef.current) {
+      navigation.dispatch(data.action);
+      return;
+    }
+    // 100ms setTimeout defeats an iOS Alert-presentation timing race seen
+    // after the inline edit form closes. When usePreventRemove fires
+    // immediately after a UIKit-backed picker / form dismisses, the
+    // previous presentation context hasn't fully released and Alert.alert
+    // silently no-ops — chevron tap registers but the modal never appears
+    // and the screen stays stuck. The 100ms gap lets iOS finish releasing
+    // the prior context. Perceptible-but-acceptable trade.
+    setTimeout(() => {
+      Alert.alert(
+        'Discard scan?',
+        'Your edits will be lost.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => {} },
+          {
+            text: 'Discard',
+            style: 'destructive',
+            onPress: () => {
+              useScanStore.getState().clearAll();
+              navigation.dispatch(data.action);
+            },
+          },
+        ],
+      );
+    }, 100);
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingDay, setAddingDay] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -277,7 +325,11 @@ export default function ReviewScreen() {
 
     if (result.ok === true) {
       // Full success — either everything posted, or everything was queued
-      // offline. Either way the review screen is done.
+      // offline. Either way the review screen is done. Set the flag BEFORE
+      // clearAll() because clearAll nulls `parsed`, which fires the
+      // !parsed → router.replace('/scan') effect on the next render; that
+      // cascade-triggered nav also hits beforeRemove and must pass through.
+      hasSubmittedRef.current = true;
       if (result.queued) {
         showToast(`${result.count} saved locally — will sync when online`, 'info');
       } else {
@@ -364,8 +416,24 @@ export default function ReviewScreen() {
       <Stack.Screen
         options={{
           title: 'Review & submit',
-          headerBackTitle: '',
-          headerBackButtonDisplayMode: 'minimal',
+          // Burnt-orange tint on the back chevron so it reads as a
+          // tappable affordance against the cream header rather than
+          // blending into the neutral text. Same accent used elsewhere
+          // (CTAs, period accents); keeps the scan flow's exit gesture
+          // visually findable.
+          headerTintColor: colors.accent,
+          // 'Back' label + 'default' display mode together render the
+          // chevron + label combo iOS users expect. The prior empty
+          // headerBackTitle + 'minimal' displayMode suppressed the label
+          // entirely, leaving just a faint chevron — easy to miss when
+          // the eye is anchored on the submit pill at bottom.
+          headerBackTitle: 'Back',
+          headerBackButtonDisplayMode: 'default',
+          // iOS-only: disable the long-press menu on the back chevron so
+          // the user can't skip past the discard-confirmation gate by
+          // long-pressing back and picking a stack-root entry. Harmless
+          // on Android.
+          headerBackButtonMenuEnabled: false,
         }}
       />
 

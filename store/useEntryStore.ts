@@ -114,6 +114,34 @@ export interface SubmitParsedBatchOptions {
   priorLocalIds?: number[];
 }
 
+/**
+ * In-memory draft for the manual entry screen, keyed by `${projectId}__${date}`.
+ * Holds the four drafted fields the user has actively edited; ephemeral UI
+ * state (focus, error flashes, primed-chip nudges, in-flight flags, derived
+ * suggestions) stays component-local.
+ *
+ * Drafts are NEW-entry only — edit mode (entryId URL param) bypasses this
+ * layer entirely. Cleared on submit completion (success OR failure) since
+ * `submitEntry` persists the row locally before the BQE call; preserving a
+ * draft past completion would surface a phantom of an entry that's already
+ * in the user's pending queue.
+ *
+ * `tappedChips` is an array (not Set) so the store shape stays serialisable
+ * and stable across hydrations — the consuming component wraps it back into
+ * a Set at mount time.
+ */
+export interface EntryDraft {
+  hours: number;
+  selectedBase: number | null;
+  memo: string;
+  tappedChips: string[];
+  updatedAt: number;
+}
+
+export function draftKey(projectId: string, date: string): string {
+  return `${projectId}__${date}`;
+}
+
 interface EntryState {
   weekEntries: LocalTimeEntry[];
   pendingEntries: LocalTimeEntry[];
@@ -123,6 +151,7 @@ interface EntryState {
   isLoading: boolean;
   isSyncing: boolean;
   lastError: string | null;
+  drafts: Record<string, EntryDraft>;
 
   setSelectedDate: (date: string) => void;
   loadWeek: (resourceId: string, weekStart: string, weekEnd: string) => Promise<void>;
@@ -185,6 +214,10 @@ interface EntryState {
       }
     | { ok: false; count: 0; error: string }
   >;
+
+  setDraft: (projectId: string, date: string, draft: EntryDraft) => void;
+  clearDraft: (projectId: string, date: string) => void;
+  getDraft: (projectId: string, date: string) => EntryDraft | null;
 }
 
 export const useEntryStore = create<EntryState>((set, get) => ({
@@ -196,6 +229,7 @@ export const useEntryStore = create<EntryState>((set, get) => ({
   isLoading: false,
   isSyncing: false,
   lastError: null,
+  drafts: {},
 
   setSelectedDate: (date) => set({ selectedDate: date }),
 
@@ -769,5 +803,25 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       failedCount: failed.length,
       errors: failed,
     };
+  },
+
+  setDraft: (projectId, date, draft) => {
+    const key = draftKey(projectId, date);
+    set((state) => ({ drafts: { ...state.drafts, [key]: draft } }));
+  },
+
+  clearDraft: (projectId, date) => {
+    const key = draftKey(projectId, date);
+    set((state) => {
+      if (!(key in state.drafts)) return state;
+      const next = { ...state.drafts };
+      delete next[key];
+      return { drafts: next };
+    });
+  },
+
+  getDraft: (projectId, date) => {
+    const key = draftKey(projectId, date);
+    return get().drafts[key] ?? null;
   },
 }));

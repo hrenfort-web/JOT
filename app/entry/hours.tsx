@@ -159,7 +159,22 @@ export default function HoursEntryScreen() {
     [headerTitle],
   );
 
-  const [hours, setHours] = useState(0);
+  // Draft-restore on mount: in NEW-entry mode, look up any prior in-flight
+  // draft keyed by (projectId, selectedDate) and seed the four drafted
+  // fields. Lazy useState initializers run exactly once at mount with no
+  // subscription to the store — subsequent draft writes from our own
+  // write effect (below) don't loop back as state churn. Edit mode skips
+  // restore entirely (drafts are NEW-entry only); same with the
+  // project-still-loading edge case (targetProject?.id null at synchronous
+  // first render — accept the rare flicker rather than wire an async
+  // restore path).
+  const initialDraft = useMemo(() => {
+    if (isEditing || !targetProject?.id) return null;
+    return useEntryStore.getState().getDraft(targetProject.id, selectedDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [hours, setHours] = useState<number>(() => initialDraft?.hours ?? 0);
   // The base button (1–8) the user tapped to seed the total. Tracked
   // independently of `hours` so applying a modifier (+.25 etc.) doesn't
   // visually un-select the base button — the previous "highlight === total
@@ -167,10 +182,14 @@ export default function HoursEntryScreen() {
   // shifted the total. Cleared on Clear and on tapping a different base.
   // Stays null in edit mode (we can't recover which base the user picked
   // originally), which renders all base buttons unselected — correct.
-  const [selectedBase, setSelectedBase] = useState<number | null>(null);
-  const [memo, setMemo] = useState('');
+  const [selectedBase, setSelectedBase] = useState<number | null>(
+    () => initialDraft?.selectedBase ?? null,
+  );
+  const [memo, setMemo] = useState<string>(() => initialDraft?.memo ?? '');
   const [memoFocused, setMemoFocused] = useState(false);
-  const [tappedChips, setTappedChips] = useState<Set<string>>(new Set());
+  const [tappedChips, setTappedChips] = useState<Set<string>>(
+    () => new Set(initialDraft?.tappedChips ?? []),
+  );
   const [showMemoError, setShowMemoError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loadingEntry, setLoadingEntry] = useState(isEditing);
@@ -224,6 +243,25 @@ export default function HoursEntryScreen() {
       cancelled = true;
     };
   }, [targetProject, phaseCode]);
+
+  // Draft-write effect: persist the four drafted fields back to
+  // useEntryStore so a navigation-away-and-back can restore them. NEW-
+  // entry mode only; edit mode bypasses the draft layer. Writes are
+  // unconditional (incl. empty state) so the in-store draft always
+  // reflects the latest field values without an extra dirty-check pass.
+  // tappedChips is a Set in component state; serialised as string[] for
+  // the store shape.
+  useEffect(() => {
+    if (isEditing) return;
+    if (!targetProject?.id) return;
+    useEntryStore.getState().setDraft(targetProject.id, selectedDate, {
+      hours,
+      selectedBase,
+      memo,
+      tappedChips: Array.from(tappedChips),
+      updatedAt: Date.now(),
+    });
+  }, [hours, selectedBase, memo, tappedChips, targetProject?.id, selectedDate, isEditing]);
 
   // Repeat-memo nudge: fetch this-week submission counts for every chip
   // the user is about to see, so subsequent chip taps can intercept the
@@ -482,6 +520,17 @@ export default function HoursEntryScreen() {
       source: 'manual',
     });
     setSubmitting(false);
+
+    // Clear the draft regardless of submit outcome. submitEntry inserts the
+    // local SQLite row UNCONDITIONALLY before the BQE call (see
+    // store/useEntryStore.ts submitEntry — comment at the catch block:
+    // "the entry is already saved locally above, so nothing is lost"), so
+    // every outcome here (ok, queued, httpError, network failure) means a
+    // local row exists. Preserving the draft past completion would create
+    // a phantom: user navigates back, sees the draft restored, doesn't
+    // realise the entry is already in their pending queue, and ends up
+    // duplicating it.
+    useEntryStore.getState().clearDraft(targetProject.id, selectedDate);
 
     if (result.ok) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
