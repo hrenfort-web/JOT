@@ -108,6 +108,11 @@ export function EntryRow({
       overshootRight={false}
       friction={2}
       rightThreshold={40}
+      // Explicit horizontal-drag activation threshold. Required after reanimated 4
+      // install (commit a60a6cc) altered the gesture-handler responder arbitration
+      // on the New Arch. Without this, Pressable's onPress wins the touch-up race
+      // against legacy Swipeable's default "activate on any motion".
+      activeOffsetX={[-10, 10]}
       enabled={!locked && !!onDelete}
     >
       <Pressable
