@@ -40,7 +40,7 @@ export const discovery: AuthSession.DiscoveryDocument = {
 // Trade-off accepted: client_secret ships in the JS bundle (.env →
 // EXPO_PUBLIC_BQE_CLIENT_SECRET). Acceptable for the single-tenant pilot;
 // a future server-side proxy is the long-term answer for multi-tenant.
-export const SCOPES = ['read:core', 'readwrite:core', 'openid'];
+export const SCOPES = ['read:core', 'readwrite:core', 'openid', 'offline_access'];
 
 export const redirectUri = AuthSession.makeRedirectUri({
   scheme: 'jot',
@@ -216,6 +216,15 @@ export async function exchangeCodeForTokens(
   }
 
   const raw = (await res.json()) as Record<string, unknown>;
+
+  // Temporary — remove once offline_access verified working (see handoff)
+  const grantedScope = typeof raw.scope === 'string' ? raw.scope : '';
+  const grantedScopes = grantedScope.length > 0 ? grantedScope.split(' ') : [];
+  const refreshTokenRaw = typeof raw.refresh_token === 'string' ? raw.refresh_token : '';
+  console.log('[BQE-OFFLINE-ACCESS-VERIFY] granted scopes:', grantedScopes);
+  console.log('[BQE-OFFLINE-ACCESS-VERIFY] hasRefreshToken:', refreshTokenRaw.length > 0);
+  console.log('[BQE-OFFLINE-ACCESS-VERIFY] refresh_token length:', refreshTokenRaw.length);
+
   const stored = tokenResponseToStored(raw);
   if (!stored.endpoint) {
     throw new Error('Token response missing endpoint field');
