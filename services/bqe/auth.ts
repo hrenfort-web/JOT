@@ -16,30 +16,16 @@ export const discovery: AuthSession.DiscoveryDocument = {
   revocationEndpoint: `${BQE_IDP_BASE}/connect/revocation`,
 };
 
-// BQE has migrated Jot's registration from Native App to Regular Web App,
-// which in principle supports refresh tokens via the `offline_access` scope.
-// All Phase 2 / Phase 3 plumbing (client_secret, Basic auth on the token
-// endpoint, raw-fetch exchange + refresh, 15s timeout, 5xx retry, revocation
-// on manual logout) is already in place and tested — it activates the moment
-// `offline_access` is in the SCOPES array AND BQE actually grants the scope.
+// OAuth scopes requested from BQE Core.
 //
-// `offline_access` is TEMPORARILY OMITTED because BQE's authorize endpoint
-// currently rejects every request containing it for this specific client
-// (i7vwtYLmeXDGc1r_x6ijYigUev9ECEnq.apps.bqe.com), even though the portal
-// display lists the scope as available. Verified via Phase 3.5 diagnostic
-// on 2026-05-18 — BQE x-correlation-id of one rejected request:
-// fa765030-5960-419b-bf15-e10ab7837a14. Authorize endpoint redirects to
-// /idp/home/error?errorId=… whenever offline_access is present; redirects
-// to /idp/Account/Login (the success path) whenever it's absent. Filed with
-// Nasiha at BQE Support — Request Id 4001a001-0001-f700-b63f-84710c7967bb.
+// offline_access is required for refresh-token rotation. BQE initially rejected
+// it at the runtime authorize endpoint despite listing it as available in the
+// developer portal — server-side enablement was needed per BQE client registration.
 //
-// When BQE enables `offline_access` server-side for this client, the only
-// code change required is adding 'offline_access' back to the SCOPES array
-// below — every other piece is already wired up.
-//
-// Trade-off accepted: client_secret ships in the JS bundle (.env →
-// EXPO_PUBLIC_BQE_CLIENT_SECRET). Acceptable for the single-tenant pilot;
-// a future server-side proxy is the long-term answer for multi-tenant.
+// Resolved May 19, 2026 by BQE Support (Nasiha Nisar). On-device verification
+// confirmed granted scopes include offline_access and refresh_token is returned
+// on token exchange. Refresh-token rotation infrastructure (Phase 2, commit
+// e81c539) is now active.
 export const SCOPES = ['read:core', 'readwrite:core', 'openid', 'offline_access'];
 
 export const redirectUri = AuthSession.makeRedirectUri({
@@ -216,15 +202,6 @@ export async function exchangeCodeForTokens(
   }
 
   const raw = (await res.json()) as Record<string, unknown>;
-
-  // Temporary — remove once offline_access verified working (see handoff)
-  const grantedScope = typeof raw.scope === 'string' ? raw.scope : '';
-  const grantedScopes = grantedScope.length > 0 ? grantedScope.split(' ') : [];
-  const refreshTokenRaw = typeof raw.refresh_token === 'string' ? raw.refresh_token : '';
-  console.log('[BQE-OFFLINE-ACCESS-VERIFY] granted scopes:', grantedScopes);
-  console.log('[BQE-OFFLINE-ACCESS-VERIFY] hasRefreshToken:', refreshTokenRaw.length > 0);
-  console.log('[BQE-OFFLINE-ACCESS-VERIFY] refresh_token length:', refreshTokenRaw.length);
-
   const stored = tokenResponseToStored(raw);
   if (!stored.endpoint) {
     throw new Error('Token response missing endpoint field');
