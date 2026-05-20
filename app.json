@@ -73,6 +73,12 @@
         "projectId": "03226c57-022c-4e74-8cea-2d9c5b15447a"
       }
     },
-    "owner": "hrenfort"
+    "owner": "hrenfort",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/03226c57-022c-4e74-8cea-2d9c5b15447a"
+    }
   }
 }
