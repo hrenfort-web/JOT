@@ -430,23 +430,6 @@ export default function HomeScreen() {
       )}
 
       {lastError ? <Text style={styles.error}>{lastError}</Text> : null}
-
-      {/* Persistent CTA — visible whether the user has 0 entries or a
-          full week logged. Unconditional so users always have a clear
-          path to the picker without hunting for the FAB. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Log your time"
-        onPress={() => {
-          router.push('/entry/picker');
-        }}
-        style={({ pressed }) => [
-          styles.firstEntryBtn,
-          pressed && styles.firstEntryBtnPressed,
-        ]}
-      >
-        <Text style={styles.firstEntryBtnText}>Log your time</Text>
-      </Pressable>
     </Animated.View>
   );
 
@@ -510,7 +493,16 @@ export default function HomeScreen() {
         }
       >
         <View style={styles.header}>
-          <Text style={styles.greeting}>{greetingFor(user)}</Text>
+          <View style={styles.greetingRow}>
+            <Text style={styles.greeting}>{greetingFor(user)}</Text>
+            <View
+              style={styles.brandChip}
+              accessibilityRole="image"
+              accessibilityLabel="Jot"
+            >
+              <Text style={styles.brandChipText}>J.</Text>
+            </View>
+          </View>
           <View style={styles.weekNavRow}>
             <Pressable
               accessibilityRole="button"
@@ -704,13 +696,24 @@ const styles = StyleSheet.create({
   },
   scroll: {
     paddingTop: 8,
-    paddingBottom: 120,
+    // 160 (up from 120) so the absolutely-positioned FAB (bottom:24,
+    // height:52) always floats clear of the last scroll card (the Submit
+    // Week card), which previously slid under the FAB at full scroll.
+    paddingBottom: 160,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 16,
     gap: 8,
+  },
+  // Greeting row: greeting on the left, "J." brand chip pinned right.
+  // space-between pushes the chip to the far edge; center alignment keeps
+  // the 38px tile vertically centered against the 50px greeting line.
+  greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   // Theme B greeting: Architects Daughter at 32px. The handwritten tone
   // greets the user — the rest of the home page is typeset prose. Negative
@@ -724,6 +727,27 @@ const styles = StyleSheet.create({
     textShadowColor: colors.text,
     textShadowOffset: { width: 1.5, height: 1.5 },
     textShadowRadius: 0,
+  },
+  // "J." brand chip — the app mark echoed in the home header. Cream "J."
+  // on a burnt-orange rounded tile, same letter+period construction as the
+  // "Jot." login wordmark. Decorative (accessibilityLabel "Jot"); no
+  // shadow — it sits flat as a mark, not a button.
+  brandChip: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandChipText: {
+    fontFamily: FONT_HANDWRITING,
+    fontSize: 22,
+    lineHeight: 26,
+    color: colors.surface,
+    // The trailing period adds width on the right; a hair of left padding
+    // re-centers the visual mass of "J." within the tile.
+    paddingLeft: 2,
   },
   weekNavRow: {
     flexDirection: 'row',
@@ -817,39 +841,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: colors.border,
-  },
-  // Theme B "Log Your Time" CTA. Previously a solid accent pill; now a
-  // dashed cream card. The +Log time FAB is the primary action and uses
-  // the solid-accent treatment — having two solid-accent CTAs side-by-side
-  // would split the user's eye. Dashed border signals "tap to create"
-  // without competing for visual weight.
-  firstEntryBtn: {
-    alignSelf: 'center',
-    marginTop: 4,
-    marginHorizontal: 24,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.border,
-    minWidth: 220,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  firstEntryBtnPressed: {
-    backgroundColor: colors.subtle,
-  },
-  firstEntryBtnText: {
-    // Primary text, NOT accent. The FAB directly below this card already
-    // carries the orange CTA weight — two equally-orange CTAs read as two
-    // primary actions and split the user's eye. The dashed cream border
-    // does the "this is tappable" work; the label is just the label.
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '500',
-    letterSpacing: 0.2,
   },
   moreBtnPressed: {
     opacity: 0.7,

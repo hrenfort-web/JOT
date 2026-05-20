@@ -32,7 +32,7 @@ export function FloatingActionButton({
       onPress={onPress}
       style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
     >
-      <Ionicons name={icon} size={22} color={colors.surface} />
+      <Ionicons name={icon} size={24} color={colors.surface} />
       <Text style={styles.label}>{label}</Text>
     </Pressable>
   );
@@ -45,10 +45,10 @@ const styles = StyleSheet.create({
     bottom: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    height: 52,
-    paddingHorizontal: 20,
-    borderRadius: 26,
+    gap: 10,
+    height: 60,
+    paddingHorizontal: 24,
+    borderRadius: 30,
     backgroundColor: colors.accent,
     // Shadow tuned for the warm cream page — a pure black shadow at 22%
     // reads cold on cream. Drop opacity slightly and let the shadow carry
@@ -64,7 +64,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color: colors.surface,
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '500',
     letterSpacing: 0.2,
   },
