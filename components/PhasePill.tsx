@@ -26,7 +26,7 @@ export function PhasePill({ code, size = 'md' }: PhasePillProps) {
 
 const styles = StyleSheet.create({
   pill: {
-    // Unified accent-muted treatment: #F0E2D5 background + #C75D2C label.
+    // Unified accent-muted treatment: #E3E8F3 background + #2D4E86 label.
     // No per-phase colour any more — the project dot already carries
     // identity, and the badge is just a phase-code chip.
     backgroundColor: colors.accentTint,

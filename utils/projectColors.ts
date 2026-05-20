@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 export const PROJECT_COLORS = [
-  '#C75D2C', // Terracotta (accent)
+  '#C75D2C', // Terracotta
   '#8B6B4F', // Warm brown
   '#B89B5E', // Ochre
   '#7A8B6B', // Sage green

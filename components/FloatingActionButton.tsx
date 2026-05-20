@@ -17,7 +17,7 @@ interface FloatingActionButtonProps {
  * Theme B: accent background, cream surface foreground (NOT pure white —
  * cream picks up the page tone so the FAB looks like part of the paper,
  * not a sticker on top of it). Pressed state swaps to accentPressed
- * (#A04D24) instead of opacity, matching the login button.
+ * (#243E6B) instead of opacity, matching the login button.
  */
 export function FloatingActionButton({
   icon,

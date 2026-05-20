@@ -6,7 +6,7 @@ import { useColorScheme } from 'react-native';
 // Replaces the prior green-on-soft-white iOS palette. Design goals:
 //   - Background reads as paper, not screen (warm cream #FAF6EE)
 //   - Surfaces lift via a subtler cream tone (#FFFCF5), not pure white
-//   - One accent (#C75D2C burnt orange) carries every positive state —
+//   - One accent (#2D4E86 ink blue) carries every positive state —
 //     submit, "logged" pills, today's-day marker, FAB, active tab. There
 //     is no separate "success" colour; the accent IS positive.
 //   - Empty states are NEUTRAL (cream surfaces), never pink/red. The data
@@ -74,11 +74,11 @@ export const lightColors: ColorPalette = {
   // tokens are kept distinct in the type for future-proofing if we ever
   // want a separate primary CTA tone (e.g. brand colour for the wordmark
   // accent vs. interactive elements). Today they collapse to one.
-  primary: '#C75D2C',
-  primaryTint: '#F0E2D5',
-  accent: '#C75D2C',
-  accentTint: '#F0E2D5',
-  accentPressed: '#A04D24',
+  primary: '#2D4E86',
+  primaryTint: '#E3E8F3',
+  accent: '#2D4E86',
+  accentTint: '#E3E8F3',
+  accentPressed: '#243E6B',
 
   secondary: '#B06840',
   secondaryTint: '#F8E9E0',
@@ -112,11 +112,11 @@ export const darkColors: ColorPalette = {
   borderSubtle: 'rgba(255,255,255,0.08)',
   subtle: '#1A1A1C',
 
-  primary: '#C75D2C',
-  primaryTint: '#3A1F12',
-  accent: '#C75D2C',
-  accentTint: '#3A1F12',
-  accentPressed: '#A04D24',
+  primary: '#5277C0',
+  primaryTint: '#1B2A47',
+  accent: '#5277C0',
+  accentTint: '#1B2A47',
+  accentPressed: '#3E5C9A',
 
   secondary: '#C47856',
   secondaryTint: '#3A2418',
