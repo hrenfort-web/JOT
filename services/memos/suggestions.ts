@@ -1,5 +1,6 @@
 import { getAll } from '../../db/database';
 import { toIsoDay } from '../../utils/dateHelpers';
+import { getMemoTemplatesForPhase } from '../firmSettings';
 
 export const PHASE_DEFAULTS: Record<string, string[]> = {
   SD: ['Concept development', 'Site analysis', 'Programming', 'Client meeting'],
@@ -52,9 +53,20 @@ export async function fetchRecentMemos(projectId: string): Promise<string[]> {
 export async function getMemoSuggestions(
   projectId: string,
   phaseCode: string | null,
+  phaseName?: string | null,
 ): Promise<MemoSuggestions> {
   const recent = await fetchRecentMemos(projectId);
-  const phaseList = (phaseCode && PHASE_DEFAULTS[phaseCode.toUpperCase()]) ?? GENERIC_DEFAULTS;
+
+  // Template priority: firm-specific phase-name templates win over the
+  // generic phase-code defaults, which win over GENERIC_DEFAULTS. Firm
+  // templates are matched by normalized phase NAME (e.g. "20 Schematic
+  // Design"), which is what Studio G's phases carry — their names don't
+  // yield a phaseCode, so without this tier they fell through to generic.
+  const firmTemplates = phaseName ? await getMemoTemplatesForPhase(phaseName) : null;
+  const phaseList =
+    firmTemplates ??
+    (phaseCode ? PHASE_DEFAULTS[phaseCode.toUpperCase()] : undefined) ??
+    GENERIC_DEFAULTS;
 
   const chips: string[] = [];
   const seen = new Set<string>();
@@ -69,7 +81,7 @@ export async function getMemoSuggestions(
   const hasHistory = recent.length > 0;
   const label = hasHistory
     ? 'Your recent memos'
-    : `Suggested for ${phaseCode ?? 'this phase'}`;
+    : `Suggested for ${phaseName ?? phaseCode ?? 'this phase'}`;
 
   return { label, chips, hasHistory };
 }

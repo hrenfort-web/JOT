@@ -96,7 +96,7 @@ export function ReviewEntryEditor({
     let cancelled = false;
     (async () => {
       const phaseCode = selectedPhase?.phaseCode ?? null;
-      const result = await getMemoSuggestions(target, phaseCode);
+      const result = await getMemoSuggestions(target, phaseCode, selectedPhase?.name);
       if (!cancelled) setSuggestions(result);
     })();
     return () => {

@@ -73,3 +73,59 @@ export const STUDIO_G_ACTIVITY_PINNING = {
 };
 
 export type ActivityPinning = typeof STUDIO_G_ACTIVITY_PINNING;
+
+/**
+ * Studio G memo-suggestion templates, keyed by human-readable phase name.
+ *
+ * Drives getMemoSuggestions() chip suggestions per phase. Keys keep the
+ * leading numbers + punctuation for documentation clarity; lookup is
+ * normalized (letters-only, lowercase) so "20 Schematic Design" matches
+ * the LocalProject phase name regardless of numbering/punctuation drift.
+ *
+ * To change templates:
+ * 1. Edit the arrays in this file
+ * 2. Bump STUDIO_G_FIRM_SETTINGS_VERSION in services/firmSettings.ts
+ * 3. Commit, build, push — all users pick up the new seed on next launch
+ */
+export const STUDIO_G_MEMO_TEMPLATES: Record<string, string[]> = {
+  "00 Project Negotiation": ["Proposal", "Fee discussion", "Scope definition", "Client meeting", "Contract review"],
+  "05 Meetings": ["Team coordination", "Client meeting", "Consultant coordination", "Internal review", "Status update"],
+  "10 Pre-Design": ["Programming", "Site analysis", "Code research", "Client interviews", "Initial sketches"],
+  "20 Schematic Design": ["Concept development", "Site analysis", "Client meeting", "Schematic options", "Programming review"],
+  "30 Design Development": ["Drawing development", "Consultant coordination", "Design revisions", "Detail studies", "Material selection"],
+  "50 Construction Documents": ["Drawing production", "Detail development", "Spec writing", "Code review", "Coordination"],
+  "60 Permits & Approvals": ["Permit submission", "Plan check response", "Corrections", "Agency coordination", "Code review"],
+  "70 Bidding": ["Bid review", "Contractor coordination", "RFI response", "Addenda", "Bid analysis"],
+  "80 Construction Administration": ["RFI review", "Submittal review", "Site visit", "Punch list", "Contractor coordination"],
+};
+
+export type MemoTemplates = typeof STUDIO_G_MEMO_TEMPLATES;
+
+/**
+ * Alias phrases → canonical phase key. Lets a shorter/alternate phrase a
+ * phase name might contain (e.g. "Construction Drawings", "Permit") resolve
+ * to an existing template set. Each value MUST be a key in
+ * STUDIO_G_MEMO_TEMPLATES; the seed builder below throws if it isn't.
+ */
+export const STUDIO_G_MEMO_TEMPLATE_ALIASES: Record<string, string> = {
+  'Construction Drawings': '50 Construction Documents',
+  'Permit': '60 Permits & Approvals',
+  'Meeting': '05 Meetings',
+};
+
+/**
+ * The actual seeded payload: the nine canonical templates plus one entry per
+ * alias phrase, each alias pointing at the SAME chip array as its canonical
+ * key (referenced, not duplicated, so chips stay single-sourced). Built
+ * programmatically; throws at module load if an alias references a missing
+ * canonical key.
+ */
+export const STUDIO_G_MEMO_TEMPLATES_SEED: Record<string, string[]> = (() => {
+  const out: Record<string, string[]> = { ...STUDIO_G_MEMO_TEMPLATES };
+  for (const [alias, canonical] of Object.entries(STUDIO_G_MEMO_TEMPLATE_ALIASES)) {
+    const chips = STUDIO_G_MEMO_TEMPLATES[canonical];
+    if (!chips) throw new Error(`[studioG] memo alias "${alias}" points to missing canonical key "${canonical}"`);
+    out[alias] = chips;
+  }
+  return out;
+})();

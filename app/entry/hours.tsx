@@ -236,7 +236,7 @@ export default function HoursEntryScreen() {
     if (!targetProject) return;
     let cancelled = false;
     (async () => {
-      const result = await getMemoSuggestions(targetProject.id, phaseCode);
+      const result = await getMemoSuggestions(targetProject.id, phaseCode, targetProject?.name);
       if (!cancelled) setSuggestions(result);
     })();
     return () => {
