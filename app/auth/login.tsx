@@ -131,9 +131,9 @@ export default function LoginScreen() {
           tagline. Don't add a third tone — it dilutes the accent.
         */}
         <Text style={styles.wordmark}>
-          Jot it<Text style={styles.wordmarkPeriod}>.</Text>
+          Jot<Text style={styles.wordmarkPeriod}>.</Text>
         </Text>
-        <Text style={styles.tagline}>Done<Text style={styles.taglinePeriod}>.</Text></Text>
+        <Text style={styles.tagline}>Jot it. Done.</Text>
       </View>
 
       {sessionExpired ? (
@@ -222,17 +222,15 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
   tagline: {
-    // System sans-serif (no fontFamily → platform default). The
-    // counterpoint to the wordmark — typeset prose against the
-    // handwritten brand mark.
+    // Architects Daughter, secondary tone — the calm handwritten echo of
+    // the hero. No accent anywhere: the hero "Jot." dot is the single
+    // orange signature, so the tagline stays entirely in textSecondary.
     marginTop: 24,
-    fontSize: 16,
-    fontWeight: '500',
+    fontFamily: FONT_HANDWRITING,
+    fontSize: 24,
     color: colors.textSecondary,
-    letterSpacing: 0.3,
     textAlign: 'center',
   },
-  taglinePeriod: { color: colors.accent },
   actions: {
     gap: 16,
   },
