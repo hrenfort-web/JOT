@@ -20,6 +20,15 @@ export interface ReviewEntry {
   day: string;
   projectId: string | null;
   phaseProjectId: string | null;
+  /**
+   * The AI's best guess at the handwritten project name. Preserved even when
+   * projectId/phaseProjectId are null (the unmatched case) so the review
+   * screen can quote the user's own writing back to them in the "couldn't
+   * match X" nudge. Empty string for manual-added entries (the editor
+   * carries the canonical name via projectsById). Set by parsedToReview
+   * from ParsedEntry.projectName.
+   */
+  projectName: string;
   hours: number;
   memo: string;
   flag: ParsedFlag | null;

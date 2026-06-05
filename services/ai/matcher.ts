@@ -1,6 +1,5 @@
 import type { LocalProject, LocalTimeEntry } from '../../db/schema';
 import { isAllowedContractType } from '../bqe/project';
-import { recentProjectParentIds } from '../../utils/projectSort';
 
 export interface PhaseLookup {
   code: string | null;
@@ -99,36 +98,44 @@ export function lookupTableToPromptString(entries: ProjectLookupEntry[]): string
 }
 
 // ---------------------------------------------------------------------------
-// Scan-prompt filtering.
+// Scan-prompt project lookup.
 //
-// The Anthropic prompt's project lookup table dominates the token budget for
-// every scan — at Studio G's ~347 parents × ~5 phases each it's ~70-80K
-// input tokens. That's expensive AND degrades match accuracy: too many
-// candidates and the model picks poor matches (see the Marketing→Services
-// misclassification from the first device test).
+// `buildScanLookup` ships ALL active root projects to the model, ranked by
+// per-user recency. Parents the user has charged time to within the recency
+// window sort first (most recent first); parents the user has never charged
+// sort to the bottom and only get dropped when the firm exceeds the cap.
 //
-// `buildScanLookup` ships a filtered subset to the model:
-//   • parents the user has logged time to in the last 90 days (canonical
-//     "recent" definition, same as the home picker), AND
-//   • parents flagged as Marketing (contractType 3) or Overhead (contractType
-//     4) — firm-wide staples like Office, Meetings, PTO. Always included.
+// This is a RANK-not-FILTER design. Every real active project is matchable —
+// projects the user hasn't yet charged still appear in the table (just lower
+// down), so the model can match "Illumio" by name even on the user's first
+// day on that project. The previous design filtered out non-recent parents
+// outright, which surfaced as "the AI says my project doesn't exist" on a
+// project the user simply hadn't logged against in 90 days.
 //
-// With a hard cap at 60 parents (top-50 by recency + overhead, then slice)
-// to bound worst-case prompt size for power users.
+// Token budget: at Studio G's ~80-120 active root projects × ~5 phases each
+// the lookup table is ~10-20K input tokens. The default cap (60) is a
+// conservative backstop for unknown firms; Studio G's firm setting raises
+// it to 250 — effectively no cap at current size. If a future firm has
+// thousands of active projects, lower their scanLookupOptions.maxParents
+// firm setting; the recency-stalest parents drop first.
 //
-// Brand-new projects the user hasn't charged time to yet won't appear in
-// the filtered set. The flag-and-fix path on the review screen catches
-// those — the AI returns a low-confidence flag, the user picks from the
-// full project list via the existing editor.
+// Overhead projects (contractType 3 = Marketing, 4 = Overhead) no longer
+// receive special force-include treatment. They rank by recency like every
+// other project — which is fine because users actually log against them
+// (OA-Admin, PTO, Holiday, Marketing all surface in the recent window for
+// typical users). If a future firm regularly hits cap pressure where
+// overhead is being stripped, raise that firm's maxParents rather than
+// re-introducing a special case here.
 // ---------------------------------------------------------------------------
 
 const MAX_LOOKUP_PARENTS_DEFAULT = 60;
-const MAX_RECENT_PARENTS_DEFAULT = 50;
 const SCAN_RECENT_DAYS_DEFAULT = 90;
 
 // BQE ContractType enum values that mark a project as overhead/admin work
-// rather than billable client work. Defined in services/bqe/project.ts as
-// the firm-agnostic structural signal.
+// rather than billable client work. Kept around for debug telemetry — the
+// debug payload still reports how many active overhead parents exist in the
+// pool, which is useful for on-device verification. No longer used as a
+// filter / inclusion gate.
 const OVERHEAD_CONTRACT_TYPES = new Set<number>([3, 4]);
 
 function isOverheadProject(p: LocalProject): boolean {
@@ -136,17 +143,15 @@ function isOverheadProject(p: LocalProject): boolean {
 }
 
 export interface ScanLookupDebug {
-  /** Active parents in the firm-wide project cache (before any filter). */
+  /** Active root projects in the firm-wide project cache — the eligible pool. */
   totalParents: number;
-  /** Parents the user logged time to within the window. */
+  /** Active parents the user has charged time to within recentDays (informational). */
   recentCount: number;
-  /** Parents tagged as Marketing/Overhead, regardless of recency. */
+  /** Active parents tagged Marketing/Overhead (informational). */
   overheadCount: number;
-  /** Parents selected after dedup but before the cap. */
-  selectedParents: number;
-  /** True when the cap trimmed at least one parent off the tail. */
+  /** True when totalParents exceeded maxParents and the tail was trimmed. */
   capped: boolean;
-  /** Parents actually shipped in the prompt. */
+  /** Parents actually shipped in the prompt (== min(totalParents, maxParents)). */
   finalParents: number;
   /** Total phase rows in the final markdown table. */
   phaseCount: number;
@@ -156,7 +161,6 @@ export interface ScanLookupDebug {
 
 export interface BuildScanLookupOptions {
   maxParents?: number;
-  maxRecent?: number;
   recentDays?: number;
 }
 
@@ -167,25 +171,14 @@ export function buildScanLookup(
   options?: BuildScanLookupOptions,
 ): { lookup: ProjectLookupEntry[]; debug: ScanLookupDebug } {
   const maxParents = options?.maxParents ?? MAX_LOOKUP_PARENTS_DEFAULT;
-  const maxRecent = options?.maxRecent ?? MAX_RECENT_PARENTS_DEFAULT;
   const recentDays = options?.recentDays ?? SCAN_RECENT_DAYS_DEFAULT;
 
-  // Step 1: canonical "recent" set — same definition the home picker uses
-  // so a parent's appearance in scan filtering mirrors its appearance in
-  // the home "Recent projects" list.
-  const recentSet = recentProjectParentIds(
-    projects,
-    recentEntries,
-    currentUserResourceId,
-    recentDays,
-  );
-
-  // Step 2: per-parent recency timestamp, for top-K ranking under the cap.
-  // Logic mirrors recentProjectParentIds (same cutoff, same user filter,
-  // same phase→parent walk) but tracks the latest entry timestamp so we
-  // can rank "more recent first" rather than just set-membership. Kept
-  // inline to avoid widening projectSort's public surface for a single
-  // caller.
+  // Per-parent latest-entry timestamp for the current user. Pure RANKING
+  // signal — anything within the cutoff contributes; anything older (or
+  // never charged) gets no entry in this map and naturally sorts to the
+  // bottom via the `?? 0` fallback in the comparator below. Explicitly
+  // NOT a filter: every active parent is eligible regardless of presence
+  // in this map.
   const cutoff = Date.now() - recentDays * 24 * 60 * 60 * 1000;
   const byId = new Map<string, LocalProject>();
   for (const p of projects) byId.set(p.id, p);
@@ -197,48 +190,33 @@ export function buildScanLookup(
     const proj = byId.get(e.projectId);
     if (!proj) continue;
     const parentId = proj.parentId ?? proj.id;
-    if (!recentSet.has(parentId)) continue;
     const existing = recencyByParent.get(parentId);
     if (existing == null || t > existing) {
       recencyByParent.set(parentId, t);
     }
   }
 
-  // Active parents only. The recency map can contain ids that have since
-  // been deactivated in BQE — those would be useless in the prompt.
+  // All active root projects are eligible. Rank by recency (recent first;
+  // never-charged sinks to the bottom via the `?? 0` fallback), then cap.
+  // The cap trims the stalest projects from the tail when a firm exceeds
+  // maxParents — never-charged first, then oldest-charged.
   const allActiveParents = projects.filter(
     (p) => p.parentId == null && p.isActive,
   );
+  const rankedParents = [...allActiveParents].sort(
+    (a, b) =>
+      (recencyByParent.get(b.id) ?? 0) - (recencyByParent.get(a.id) ?? 0),
+  );
 
-  // Step 3: recent parents, ordered most-recent first, trimmed to maxRecent.
-  const recentParents = allActiveParents
-    .filter((p) => recencyByParent.has(p.id))
-    .sort(
-      (a, b) =>
-        (recencyByParent.get(b.id) ?? 0) - (recencyByParent.get(a.id) ?? 0),
-    );
-  const recentTop = recentParents.slice(0, maxRecent);
-  const recentTopIds = new Set(recentTop.map((p) => p.id));
-
-  // Step 4: overhead parents (always-included). Dedup against recentTop
-  // so a project that's both recent AND overhead isn't double-counted.
-  const overheadAll = allActiveParents.filter(isOverheadProject);
-  const overheadOnly = overheadAll.filter((p) => !recentTopIds.has(p.id));
-
-  // Step 5: union with recent first (preserves recency ordering through
-  // a stable slice), overhead appended, then hard cap. The cap trims off
-  // the tail — which is overhead-only — when a firm has unusually many
-  // overhead categories. Studio G has ~10, so this almost never triggers
-  // in practice.
-  const combined = [...recentTop, ...overheadOnly];
-  const capped = combined.length > maxParents;
-  const finalParents = capped ? combined.slice(0, maxParents) : combined;
+  const capped = rankedParents.length > maxParents;
+  const finalParents = capped
+    ? rankedParents.slice(0, maxParents)
+    : rankedParents;
   const finalIds = new Set(finalParents.map((p) => p.id));
 
-  // Filter to selected parents + phases-of-selected-parents. Phases of
-  // unselected parents disappear. buildProjectLookup will further drop
-  // anything that fails its isAllowedContractType check — that's fine,
-  // overhead parents (3, 4) are both in the allowed set.
+  // Filter the flat project list to selected parents + their phases.
+  // Phases of unselected parents disappear. buildProjectLookup will
+  // further drop anything that fails its isAllowedContractType check.
   const filtered = projects.filter((p) => {
     if (p.parentId == null) return finalIds.has(p.id);
     return finalIds.has(p.parentId);
@@ -247,22 +225,21 @@ export function buildScanLookup(
   const lookup = buildProjectLookup(filtered);
 
   // Diagnostics — counted post-buildProjectLookup so the totals reflect
-  // what's actually in the prompt, not what we asked for. (Edge case: a
-  // parent with all phases disallowed and itself disallowed would be
-  // dropped by buildProjectLookup, shrinking finalParents in practice.)
+  // what's actually in the prompt. recentCount/overheadCount are now
+  // purely informational (neither is a filter input).
   const phaseCount = lookup.reduce((sum, e) => sum + e.phases.length, 0);
-  // Rough token estimate: ~40 tokens per row (two UUIDs dominate at ~10
-  // tokens each), plus ~200 tokens for the markdown header and column
-  // separators. Approximate — for spotting regressions, not budgeting.
   const estimatedTokens = phaseCount * 40 + 200;
+  const recentCount = allActiveParents.filter((p) =>
+    recencyByParent.has(p.id),
+  ).length;
+  const overheadCount = allActiveParents.filter(isOverheadProject).length;
 
   return {
     lookup,
     debug: {
       totalParents: allActiveParents.length,
-      recentCount: recentParents.length,
-      overheadCount: overheadAll.length,
-      selectedParents: combined.length,
+      recentCount,
+      overheadCount,
       capped,
       finalParents: finalParents.length,
       phaseCount,

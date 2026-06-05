@@ -15,10 +15,11 @@ import { colors } from '../theme';
 import { useScanStore } from '../store/useScanStore';
 import { useProjectStore } from '../store/useProjectStore';
 import { useAuthStore } from '../store/useAuthStore';
-import { buildScanLookup } from '../services/ai/matcher';
+import { buildScanLookup, type BuildScanLookupOptions } from '../services/ai/matcher';
 import { parseTimesheetImage } from '../services/ai/scanner';
 import { loadLocalEntriesInRange } from '../services/bqe/timeentry';
 import { logError } from '../services/errors';
+import { FIRM_SETTING_KEYS } from '../services/firmSettings';
 import { DEFAULT_RECENT_DAYS } from '../utils/projectSort';
 import type { LocalTimeEntry } from '../db/schema';
 
@@ -31,6 +32,26 @@ const STEPS = [
 const STEP_TICK_MS = 1800;
 const TIMEOUT_MS = 30_000;
 const MIN_OVERALL_CONFIDENCE = 0.5;
+
+/**
+ * Read the firm's scan-lookup config from the in-memory firm-settings
+ * mirror. Returns undefined (so matcher uses its built-in defaults) on
+ * any of: setting missing, JSON malformed, value not a positive finite
+ * number. Never throws — scan must not fail on a misconfigured setting.
+ */
+function readScanLookupOptions(): BuildScanLookupOptions | undefined {
+  const raw =
+    useProjectStore.getState().firmSettings[FIRM_SETTING_KEYS.SCAN_LOOKUP_OPTIONS];
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { maxParents?: unknown };
+    const maxParents = Number(parsed.maxParents);
+    if (!Number.isFinite(maxParents) || maxParents <= 0) return undefined;
+    return { maxParents };
+  } catch {
+    return undefined;
+  }
+}
 
 export default function ProcessingScreen() {
   const router = useRouter();
@@ -74,12 +95,14 @@ export default function ProcessingScreen() {
 
     (async () => {
       try {
-        // Load the user's recent entries so the scan lookup can filter
-        // down to (recent ∪ overhead) instead of shipping every active
-        // project firm-wide. ~50-200ms SQLite read on Studio G's data.
-        // Empty/error → fall through with [] entries; buildScanLookup
-        // still ships overhead-only, which is better than failing the
-        // scan entirely.
+        // Load the user's recent entries so the scan lookup can RANK
+        // projects by recency (recent-first; never-charged sinks to the
+        // bottom). All active projects are eligible regardless of
+        // recency — recency is purely a ranking signal, never a filter.
+        // ~50-200ms SQLite read on Studio G's data. Empty/error → fall
+        // through with [] entries; buildScanLookup still ships every
+        // active parent (just unranked), which is better than failing
+        // the scan entirely.
         let recentEntries: LocalTimeEntry[] = [];
         if (user?.id) {
           const end = new Date();
@@ -89,19 +112,27 @@ export default function ProcessingScreen() {
             recentEntries = await loadLocalEntriesInRange(user.id, start, end);
           } catch (loadErr) {
             console.warn(
-              '[jot:scan-lookup] recent-entries load failed, falling back to overhead-only:',
+              '[jot:scan-lookup] recent-entries load failed, ranking will fall back to insertion order:',
               loadErr instanceof Error ? loadErr.message : loadErr,
             );
           }
         }
 
+        // Firm-configurable cap on the eligible project pool. Studio G
+        // seeds 250 (effectively no cap at current firm size); other
+        // firms (or unseeded installs) fall back to matcher's built-in
+        // default (60). Parse defensively — any malformed JSON, missing
+        // key, or non-numeric value silently degrades to the default.
+        const scanLookupOptions = readScanLookupOptions();
+
         const { lookup, debug } = buildScanLookup(
           flatProjects,
           recentEntries,
           user?.id ?? '',
+          scanLookupOptions,
         );
         console.log(
-          `[jot:scan-lookup] filtered ${debug.finalParents} parents from ${debug.totalParents} total ` +
+          `[jot:scan-lookup] ranked ${debug.finalParents} parents from ${debug.totalParents} eligible ` +
             `(recent=${debug.recentCount}, overhead=${debug.overheadCount}, capped=${debug.capped}), ` +
             `${debug.phaseCount} phases in prompt, ~${debug.estimatedTokens} tokens estimated`,
         );

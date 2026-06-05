@@ -129,3 +129,25 @@ export const STUDIO_G_MEMO_TEMPLATES_SEED: Record<string, string[]> = (() => {
   }
   return out;
 })();
+
+/**
+ * Scan-prompt lookup cap.
+ *
+ * The scan project lookup ships ALL active root projects to Claude, ranked
+ * by per-user recency. The cap only trims the tail when a firm exceeds it.
+ * Studio G has ~80-120 active root projects today, so 250 is effectively
+ * "no cap" — every active project is eligible to match a handwritten name,
+ * including ones the user hasn't personally charged yet (which was the
+ * pre-fix exclusion that made "Illumio" unmatchable).
+ *
+ * If a future firm has thousands of active projects and token cost becomes
+ * the constraint, lower this — recency-stalest drops first.
+ *
+ * Read at runtime from LocalFirmSettings → useProjectStore.firmSettings →
+ * app/scan-processing.tsx → buildScanLookup(options).
+ */
+export const STUDIO_G_SCAN_LOOKUP_OPTIONS = {
+  maxParents: 250,
+};
+
+export type ScanLookupOptions = typeof STUDIO_G_SCAN_LOOKUP_OPTIONS;

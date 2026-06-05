@@ -280,6 +280,10 @@ export default function ReviewScreen() {
         day,
         projectId: value.projectId,
         phaseProjectId: value.phaseProjectId,
+        // Manual-added entries don't carry a handwritten guess — the
+        // editor's projectId resolves the name via projectsById at render
+        // time. Empty here is correct.
+        projectName: '',
         hours: value.hours,
         memo: value.memo,
         flag: null,
@@ -706,13 +710,37 @@ function EntryDisplayRow({ entry, projectsById, onEdit }: EntryDisplayRowProps) 
       ? projectsById.get(entry.projectId)
       : phase;
   const meta = phaseMeta(phase?.phaseCode ?? null, phase?.name ?? null);
-  const projectName = parent?.name ?? 'Unknown project';
+  // Known-unmatched: the AI returned null for BOTH projectId AND
+  // phaseProjectId — i.e. it could not find a row in the scan lookup
+  // table to match the handwritten name. We surface an app-controlled
+  // nudge in this case instead of the AI's free-text reason, which has
+  // historically asserted "<name> doesn't exist" about real projects
+  // that the user simply needs to pick from the full list.
+  const isUnmatched =
+    entry.projectId === null && entry.phaseProjectId === null;
+  const projectName = isUnmatched
+    ? 'Tap to pick the project'
+    : (parent?.name ?? 'Unknown project');
   const color = parent?.color ?? phase?.color ?? colors.border;
   const flagged = entry.flag !== null;
   // submitError takes visual precedence over the AI's parse-time flag —
   // a BQE rejection is more recent and more actionable than the model's
   // "I'm unsure about this hour" hint.
   const rejected = entry.submitError !== null;
+  // Always surface the warning chip for an unmatched entry, even when
+  // the AI didn't attach an explicit flag — the user needs the nudge to
+  // know they have to pick a project before submit. Quote the AI's
+  // best guess at the handwritten name when we have one ("Couldn't
+  // match \"Illumio\" — tap to pick it"); fall back to "this entry"
+  // only when the AI returned no name at all (rare — usually means
+  // truly illegible writing or an empty row).
+  const showFlagRow = !rejected && (isUnmatched || flagged);
+  const unmatchedGuess = entry.projectName.trim();
+  const flagText = isUnmatched
+    ? unmatchedGuess.length > 0
+      ? `Couldn't match "${unmatchedGuess}" — tap to pick it.`
+      : "Couldn't match this entry to one of your projects — tap to pick it."
+    : entry.flag?.reason;
 
   return (
     <Pressable
@@ -720,7 +748,7 @@ function EntryDisplayRow({ entry, projectsById, onEdit }: EntryDisplayRowProps) 
       style={({ pressed }) => [
         styles.row,
         rejected && styles.rowRejected,
-        !rejected && flagged && styles.rowFlagged,
+        !rejected && (flagged || isUnmatched) && styles.rowFlagged,
         pressed && styles.pressed,
       ]}
     >
@@ -744,10 +772,10 @@ function EntryDisplayRow({ entry, projectsById, onEdit }: EntryDisplayRowProps) 
               {entry.submitError}
             </Text>
           </View>
-        ) : flagged ? (
+        ) : showFlagRow ? (
           <View style={styles.flagRow}>
             <Ionicons name="warning" size={12} color={colors.accent} />
-            <Text style={styles.flagText}>{entry.flag?.reason}</Text>
+            <Text style={styles.flagText}>{flagText}</Text>
           </View>
         ) : null}
       </View>
@@ -792,6 +820,11 @@ function parsedToReview(parsed: ParsedTimesheet, weekStart: Date): ReviewEntry[]
       day: aiDayToIso(e.day, weekStart),
       projectId: e.projectId,
       phaseProjectId: e.phaseProjectId,
+      // Preserve the AI's best guess at the handwritten name even when it
+      // couldn't match to a project. The review screen quotes it back in
+      // the unmatched-row nudge so the user sees the specific name they
+      // wrote ("Couldn't match \"Illumio\" — tap to pick it").
+      projectName: e.projectName ?? '',
       hours: e.hours,
       memo: e.memo ?? '',
       flag,

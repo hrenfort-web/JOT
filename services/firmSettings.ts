@@ -19,6 +19,7 @@ import type { LocalFirmSettingRow } from '../db/schema';
 import {
   STUDIO_G_ACTIVITY_PINNING,
   STUDIO_G_MEMO_TEMPLATES_SEED,
+  STUDIO_G_SCAN_LOOKUP_OPTIONS,
 } from './firmSettings/seed/studioG';
 
 export const FIRM_SETTING_KEYS = {
@@ -27,6 +28,7 @@ export const FIRM_SETTING_KEYS = {
   ACTIVITY_GROUPS_BG_PROGRESS: 'activityGroupsBackgroundProgress',
   ACTIVITY_PINNING: 'activityPinning',
   MEMO_TEMPLATES: 'memoTemplates',
+  SCAN_LOOKUP_OPTIONS: 'scanLookupOptions',
   FIRM_SETTINGS_VERSION: 'firmSettingsVersion',
 } as const;
 
@@ -42,8 +44,10 @@ export type ActivitySelectionMode = 'auto' | 'manual';
  *
  * v2 adds memoTemplates (phase-name-keyed memo suggestion chips).
  * v3 expands memoTemplates with alias phrases (STUDIO_G_MEMO_TEMPLATES_SEED).
+ * v4 adds scanLookupOptions (firm-configurable cap on the scan project pool;
+ *    Studio G uses 250, effectively no cap at current firm size).
  */
-export const STUDIO_G_FIRM_SETTINGS_VERSION = 3;
+export const STUDIO_G_FIRM_SETTINGS_VERSION = 4;
 
 export async function loadFirmSettings(): Promise<Record<string, string>> {
   const rows = await getAll<LocalFirmSettingRow>(
@@ -119,6 +123,10 @@ export async function seedFirmSettingsIfStale(): Promise<void> {
   await writeFirmSetting(
     FIRM_SETTING_KEYS.MEMO_TEMPLATES,
     JSON.stringify(STUDIO_G_MEMO_TEMPLATES_SEED),
+  );
+  await writeFirmSetting(
+    FIRM_SETTING_KEYS.SCAN_LOOKUP_OPTIONS,
+    JSON.stringify(STUDIO_G_SCAN_LOOKUP_OPTIONS),
   );
   await writeFirmSetting(
     FIRM_SETTING_KEYS.FIRM_SETTINGS_VERSION,

@@ -164,7 +164,7 @@ Return JSON in EXACTLY this shape — no markdown fences, no surrounding prose:
   ]
 }
 
-If you cannot identify a project at all, set projectName to your best guess, projectId and phaseProjectId to null, and add a flag explaining the miss. Never invent a phaseProjectId that is not in the table above.`;
+If you cannot match a name to a project in the table above, set projectName to your best guess at the handwritten text, set projectId and phaseProjectId to null, and add a flag with reason "Could not match to a project in the list." Do NOT state that the project does not exist or is unknown — only that you could not match it. Never invent a phaseProjectId that is not in the table above.`;
 }
 
 function extractText(data: { content?: Array<{ type: string; text?: string }> }): string {
