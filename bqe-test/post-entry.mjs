@@ -139,6 +139,16 @@ if (!resp.ok) {
   process.exit(3);
 }
 
+// Body was already pretty-printed once in the response section above; this
+// success branch just surfaces the created id so it's easy to copy for a
+// follow-up get-entries.mjs call. Reuses the same `parsed` from the
+// response-section parse — no need to re-parse `text` a second time.
+if (parsed !== null) {
+  log('created id =', parsed?.id ?? '<missing>');
+} else {
+  log('created id =', '<missing>');
+}
+
 log('OK — entry created. Pull it back with get-entries.mjs to confirm.');
 
 // -------------------------------------------------------------------------
