@@ -363,10 +363,16 @@ export default function HomeScreen() {
     );
   };
 
-  // Extracted into locals so the render order can flip based on whether the
-  // selected day has any entries. Populated day → entries first (audit bias);
-  // empty day → projects first (entry-point bias). "Recent projects" and
-  // "Log your time" stay grouped as a single unit in both orderings.
+  // Render order is fixed: entriesBlock (today's log) above projectsBlock
+  // (recent projects). Previously the order flipped based on dayEntries.length
+  // so an empty day surfaced projects first, but that flip + the
+  // LinearTransition.springify() on both blocks caused a jarring "jump down,
+  // pop back up" every time the user navigated weeks (the new selectedDate
+  // briefly filtered the OLD week's entries to zero, crossing the >=1
+  // boundary mid-load and springing the layout twice). Locking the order
+  // costs the empty-day-routes-the-user-to-projects nuance but eliminates
+  // the week-nav judder; the EmptyState's subtitle now directs the user
+  // downward to the project list.
   const projectsBlock = (
     <Animated.View style={styles.projects} layout={LinearTransition.springify()}>
       <Text style={styles.sectionHeader}>Recent projects</Text>
@@ -448,7 +454,7 @@ export default function HomeScreen() {
         <EmptyState
           icon="time-outline"
           title="No entries yet for this day"
-          subtitle="Tap a project above or use the camera to scan a timesheet."
+          subtitle="Tap a project below or use the camera to scan a timesheet."
         />
       ) : (
         <View style={styles.entryList}>
@@ -561,17 +567,8 @@ export default function HomeScreen() {
           <SummaryPill label="Remaining" hours={remaining} />
         </View>
 
-        {dayEntries.length >= 1 ? (
-          <>
-            {entriesBlock}
-            {projectsBlock}
-          </>
-        ) : (
-          <>
-            {projectsBlock}
-            {entriesBlock}
-          </>
-        )}
+        {entriesBlock}
+        {projectsBlock}
 
         {weekEntries.length > 0 ? (
           <View style={styles.submitWrap}>
