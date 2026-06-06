@@ -24,16 +24,24 @@ interface WeekBarProps {
 
 // Theme B: the week pills are neutral. No green for "met target", no red
 // for "under target" — empty is just empty, and the data is allowed to be
-// the celebration on its own. The only chrome accent is today's-day, which
-// gets an orange BORDER (not fill) so the hours number stays readable.
+// the celebration on its own.
+//
+// Highlight rules:
+//   - The SELECTED day owns the 1.5px border: accent when selected==today,
+//     dark text-color when selected is a different day. Exactly one pill
+//     at a time has the bordered "this is chosen" treatment.
+//   - TODAY (when not selected) keeps the accent-colored day letter as a
+//     subtle locator, but no border — so today never competes visually
+//     with the selected day. Earlier versions painted today AND selected
+//     with simultaneous 1.5px borders, which read as "two days are
+//     highlighted" once the selected day diverged from today.
 //
 // The component renders in two modes:
 //   1. Full pill (hoursByDay provided) — day letter + hours total below.
 //      Used on home, where the user is auditing the week at a glance.
 //   2. Compact pill (hoursByDay undefined) — just the day letter, centered.
 //      Used inside the entry flow where the user is choosing which day to
-//      log against; per-day totals aren't surfaced there. Same surface,
-//      same today-border treatment — only the hours line is omitted.
+//      log against; per-day totals aren't surfaced there.
 //
 // `targetHours` informs the a11y label only (so VO users hear "target met"
 // without the visual green/red cue Theme B dropped). Defaults to 8 when not
@@ -60,17 +68,20 @@ export function WeekBar({
         const metTarget = hours >= targetHours;
         const hasHours = hours > 0;
 
-        // Today: 1.5px accent border + accent day letter. Selected (but
-        // not today): subtle 1.5px dark border so the user can still see
-        // which day they tapped. Default: cream hairline border. No fill
-        // changes — every pill keeps the cream surface so the hours
-        // number stays the point.
-        const borderColor = isToday
-          ? colors.accent
-          : isSelected
-            ? colors.text
-            : colors.border;
-        const borderWidth = isToday || isSelected ? 1.5 : 1;
+        // Selected day owns the 1.5px border: accent when selected==today
+        // (the "you're on today and it's the selected day" state), dark
+        // text-color when selected is a different day. Today (when not
+        // selected) keeps the accent-colored day letter as a subtle
+        // locator but NO border — so exactly one pill at a time has the
+        // bordered "this is chosen" treatment, never two. Default: cream
+        // hairline border. No fill changes — every pill keeps the cream
+        // surface so the hours number stays the point.
+        const borderColor = isSelected
+          ? isToday
+            ? colors.accent
+            : colors.text
+          : colors.border;
+        const borderWidth = isSelected ? 1.5 : 1;
 
         const dayLabelColor = isToday ? colors.accent : colors.textSecondary;
         const hoursColor = hasHours ? colors.text : colors.disabledText;

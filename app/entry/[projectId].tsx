@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../theme';
 import { WeekBar } from '../../components/WeekBar';
@@ -11,7 +11,7 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { phaseMeta } from '../../utils/phaseMeta';
-import { getMonday, getWeekDays } from '../../utils/dateHelpers';
+import { fromIsoDay, getMonday, getWeekDays } from '../../utils/dateHelpers';
 import { loadLastUsedDateByPhase } from '../../services/bqe/timeentry';
 import type { LocalProject } from '../../db/schema';
 
@@ -92,16 +92,32 @@ export default function PhaseSelectionScreen() {
   const router = useRouter();
   const { projectId } = useLocalSearchParams<{ projectId: string }>();
 
-  const today = useMemo(() => new Date(), []);
-  const monday = useMemo(() => getMonday(today), [today]);
-  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
-
   const flatProjects = useProjectStore((s) => s.flatProjects);
   const getProjectPhases = useProjectStore((s) => s.getProjectPhases);
   const isLoadingProjects = useProjectStore((s) => s.isLoading);
   const selectedDate = useEntryStore((s) => s.selectedDate);
   const setSelectedDate = useEntryStore((s) => s.setSelectedDate);
   const resourceId = useAuthStore((s) => s.user?.id ?? null);
+
+  // `today` is the device's actual today — fed to WeekBar's `today` prop
+  // ONLY for the today-marker (accent day letter). It NO LONGER drives the
+  // visible week.
+  const today = useMemo(() => new Date(), []);
+
+  // Visible week is derived from selectedDate so a past-week selection on
+  // home carries through. Defensive parse: empty/malformed/stale
+  // selectedDate falls back to today so the screen never crashes.
+  // fromIsoDay uses the local-time Date constructor (`new Date(y, m-1, d)`),
+  // so the parse is timezone-safe.
+  const parsedSelectedDate = useMemo(() => {
+    if (selectedDate && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
+      const d = fromIsoDay(selectedDate);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return new Date();
+  }, [selectedDate]);
+  const monday = useMemo(() => getMonday(parsedSelectedDate), [parsedSelectedDate]);
+  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
 
   const project = useMemo(
     () => flatProjects.find((p) => p.id === projectId && !p.isPhase) ?? null,
@@ -235,8 +251,9 @@ export default function PhaseSelectionScreen() {
       {/*
         Compact WeekBar — same chrome as the home screen pills, minus
         the per-day hours total. The entry flow doesn't surface weekly
-        totals so the pill only carries the day letter; today still
-        gets the accent border + accent letter treatment.
+        totals so the pill only carries the day letter. Today (when not
+        selected) keeps the accent day letter; the SELECTED day owns
+        the border — exactly one pill is bordered at a time.
       */}
       <View style={styles.daySelectorWrap}>
         <WeekBar
@@ -245,6 +262,19 @@ export default function PhaseSelectionScreen() {
           today={today}
           onSelectDay={setSelectedDate}
         />
+        {/*
+          Unambiguous full-date callout under the WeekBar. The compact
+          day letters read identically across weeks; this label tells the
+          user e.g. "Thursday, May 22" so a past-week selection can't be
+          mistaken for the current week.
+        */}
+        <Text style={styles.dateLabel}>
+          {parsedSelectedDate.toLocaleDateString(undefined, {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+          })}
+        </Text>
       </View>
 
       <ScrollView
@@ -296,6 +326,15 @@ const styles = StyleSheet.create({
     // Vertical breathing room around the week strip. The strip itself
     // owns its horizontal padding, so we only add vertical here.
     paddingVertical: 12,
+  },
+  // Subtle secondary-color full-date label sitting directly under the
+  // WeekBar. Centered to anchor under the day-letter row.
+  dateLabel: {
+    marginTop: 8,
+    textAlign: 'center',
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   scroll: {
     paddingHorizontal: 16,

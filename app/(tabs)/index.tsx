@@ -68,8 +68,6 @@ export default function HomeScreen() {
   const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
   const friday = useMemo(() => visibleDays[visibleDays.length - 1], [visibleDays]);
   const isCurrentWeek = weekOffset === 0;
-  const isPastWeek = weekOffset < 0;
-  const isFutureWeek = weekOffset > 0;
 
   const user = useAuthStore((s) => s.user);
   const reminderPrefs = useReminderStore((s) => s.prefs);
@@ -272,7 +270,7 @@ export default function HomeScreen() {
 
   const handleSubmitWeek = () => {
     if (!user?.id || draftEntries.length === 0) return;
-    const weekLabel = weekRangeLabel(monday, friday, false, false);
+    const weekLabel = weekRangeLabel(monday, friday);
     Alert.alert(
       `Submit ${draftEntries.length} ${draftEntries.length === 1 ? 'entry' : 'entries'} (${formatHours(draftHours)}h)?`,
       `For the week of ${weekLabel}. You won't be able to edit them after.`,
@@ -524,7 +522,7 @@ export default function HomeScreen() {
               <Ionicons name="chevron-back" size={18} color={colors.text} />
             </Pressable>
             <Text style={styles.weekRange} numberOfLines={1} ellipsizeMode="tail">
-              {weekRangeLabel(monday, friday, isPastWeek, isFutureWeek)}
+              {weekRelativeTag(weekOffset)} · {weekRangeLabel(monday, friday)}
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -650,15 +648,24 @@ function buildPhaseLabelByParent(
   return labels;
 }
 
-function weekRangeLabel(
-  monday: Date,
-  friday: Date,
-  _isPast: boolean,
-  _isFuture: boolean,
-): string {
+function weekRangeLabel(monday: Date, friday: Date): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `Week of ${fmt(monday)} — ${fmt(friday)}`;
+  return `${fmt(monday)} — ${fmt(friday)}`;
+}
+
+// Relative-week tag for the home header. Pairs with weekRangeLabel as
+// `${tag} · ${range}` so the user gets BOTH the human anchor ("Last week")
+// AND the literal date range ("May 13 — May 17"). Two redundant signals
+// keep past-week navigation unambiguous. Offsets beyond ±1 fall back to a
+// terse "N weeks ago" / "In N weeks" form rather than enumerating new
+// per-offset strings.
+function weekRelativeTag(weekOffset: number): string {
+  if (weekOffset === 0) return 'This week';
+  if (weekOffset === -1) return 'Last week';
+  if (weekOffset === 1) return 'Next week';
+  if (weekOffset < 0) return `${-weekOffset} weeks ago`;
+  return `In ${weekOffset} weeks`;
 }
 
 function greetingFor(user: { firstName?: string; displayName?: string } | null): string {

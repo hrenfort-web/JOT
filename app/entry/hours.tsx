@@ -31,7 +31,7 @@ import {
   formatEntryHours,
   setHoursValue,
 } from '../../utils/hourMath';
-import { getMonday, getSunday, getWeekDays, toIsoDay } from '../../utils/dateHelpers';
+import { fromIsoDay, getMonday, getSunday, getWeekDays, toIsoDay } from '../../utils/dateHelpers';
 import {
   REPEAT_THRESHOLD,
   REPEAT_TIMEOUT_MS,
@@ -113,15 +113,36 @@ export default function HoursEntryScreen() {
   // counts. Keeping the call up here keeps the count stable.
   const headerHeight = useHeaderHeight();
 
-  const today = useMemo(() => new Date(), []);
-  const monday = useMemo(() => getMonday(today), [today]);
-  const sunday = useMemo(() => getSunday(today), [today]);
-  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
-
   const user = useAuthStore((s) => s.user);
   const flatProjects = useProjectStore((s) => s.flatProjects);
   const selectedDate = useEntryStore((s) => s.selectedDate);
   const setSelectedDate = useEntryStore((s) => s.setSelectedDate);
+
+  // `today` is the device's actual today — fed to WeekBar's `today` prop
+  // ONLY for the today-marker (accent day letter). It NO LONGER drives the
+  // visible week.
+  const today = useMemo(() => new Date(), []);
+
+  // Visible week is derived from selectedDate (the entry store's single
+  // source of truth) so a past-week selection on home carries through to
+  // the entry flow. Pre-fix, monday/sunday/visibleDays were pinned to
+  // `new Date()` and ignored which week the user was actually viewing.
+  //
+  // Parsing is defensive: empty/malformed/stale selectedDate falls back
+  // to today so the screen never crashes. fromIsoDay uses the local-time
+  // Date constructor (`new Date(y, m-1, d)`), so the parse is timezone-
+  // safe — no UTC midnight interpretation, no day-boundary shift in
+  // negative-UTC timezones.
+  const parsedSelectedDate = useMemo(() => {
+    if (selectedDate && /^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
+      const d = fromIsoDay(selectedDate);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return new Date();
+  }, [selectedDate]);
+  const monday = useMemo(() => getMonday(parsedSelectedDate), [parsedSelectedDate]);
+  const sunday = useMemo(() => getSunday(parsedSelectedDate), [parsedSelectedDate]);
+  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
   const submitEntry = useEntryStore((s) => s.submitEntry);
   const saveEntryEdits = useEntryStore((s) => s.saveEntryEdits);
   const showToast = useToastStore((s) => s.show);
@@ -595,6 +616,21 @@ export default function HoursEntryScreen() {
           today={today}
           onSelectDay={setSelectedDate}
         />
+        {/*
+          Unambiguous full-date callout under the WeekBar. The compact
+          day letters (M, T, W, Th, F) read identically across weeks; this
+          label tells the user e.g. "Thursday, May 22" so a past-week
+          selection can't be mistaken for the current week. Reads from
+          parsedSelectedDate so it always agrees with the WeekBar
+          (both derive from the same source).
+        */}
+        <Text style={styles.dateLabel}>
+          {parsedSelectedDate.toLocaleDateString(undefined, {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+          })}
+        </Text>
       </View>
 
       <ScrollView
@@ -813,6 +849,16 @@ const styles = StyleSheet.create({
   },
   daySelectorWrap: {
     paddingVertical: 12,
+  },
+  // Subtle secondary-color full-date label sitting directly under the
+  // WeekBar. Centered to anchor under the day-letter row. Light vertical
+  // gap from the pills above.
+  dateLabel: {
+    marginTop: 8,
+    textAlign: 'center',
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   // Lock banner — kept on the prior warmth-warning treatment (warningTint
   // bg + the dark amber #92400E text). Same pattern the login session-
