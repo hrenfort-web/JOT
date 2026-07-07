@@ -6,6 +6,7 @@ import { logError } from '../errors';
 type RetriableConfig = InternalAxiosRequestConfig & {
   _retriedAuth?: boolean;
   _retried5xx?: boolean;
+  _retried429?: boolean;
 };
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -297,7 +298,15 @@ bqeClient.interceptors.response.use(
       return bqeClient(config);
     }
 
-    if (status === 429 && config) {
+    // 429 rate-limit: retry at most once (mirrors the 5xx marker pattern),
+    // honoring the Retry-After header for the delay. Bounded so a sustained
+    // 429 ESCAPES after one retry instead of looping forever — that's what
+    // lets services/sync/queue.ts's 429 pause logic finally engage (it
+    // pauses the queue and respects Retry-After) instead of the interceptor
+    // wedging `processing` true. Without the marker this branch re-entered
+    // itself on every re-fire and never let the error propagate (audit H-4).
+    if (status === 429 && config && !config._retried429) {
+      config._retried429 = true;
       const retryAfter = Number(error.response?.headers?.['retry-after'] ?? 5);
       await new Promise((r) => setTimeout(r, Math.max(1, retryAfter) * 1000));
       return bqeClient(config);
