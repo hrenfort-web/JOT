@@ -41,6 +41,18 @@ import type { BqeEmployee } from '../services/bqe/employee';
 
 export type LogoutReason = 'manual' | 'session_expired';
 
+// Single-flight guard for refresh-token rotation. Module-level (NOT React
+// state) so it is shared across EVERY caller of refreshTokens — both axios
+// interceptors, prewarm, and loadStoredTokens. With refresh-token rotation
+// on, two concurrent rotations would each send the SAME old refresh token;
+// the first consumes it, the second gets invalid_grant, and the loser logs
+// out — discarding the valid tokens the winner just stored (audit SB-2).
+// Holding the in-flight rotation promise here means concurrent callers all
+// await ONE real rotation and share its outcome. Cleared on settle (success
+// OR failure) so the next call AFTER settle starts a fresh rotation instead
+// of reusing a stale resolved/rejected promise.
+let refreshInFlight: Promise<void> | null = null;
+
 interface AuthState {
   isReady: boolean;
   isAuthenticated: boolean;
@@ -191,29 +203,51 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearSessionExpired: () => set({ sessionExpired: false }),
 
   refreshTokens: async () => {
+    // No refresh token = already logged out (BQE Native sessions, or a
+    // post-logout call). Fail BEFORE touching the single-flight slot so a
+    // doomed call never becomes the shared promise other callers await.
     const { tokens } = get();
     if (!tokens?.refreshToken) {
       throw new Error('No refresh token available');
     }
-    const t0 = Date.now();
-    console.log('[jot:auth] refreshTokens START');
-    const refreshed = await refreshAccessToken(tokens.refreshToken);
-    const merged: StoredTokens = {
-      ...tokens,
-      accessToken: refreshed.accessToken,
-      refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
-      idToken: refreshed.idToken ?? tokens.idToken,
-      tokenType: refreshed.tokenType,
-      expiresAt: refreshed.expiresAt,
-      endpoint: refreshed.endpoint || tokens.endpoint,
-    };
-    await storeTokens(merged, 'refresh');
-    set({
-      tokens: merged,
-      baseUrl: merged.endpoint,
-      isAuthenticated: deriveAuthenticated(merged),
+
+    // If a rotation is already running, every concurrent caller awaits the
+    // SAME promise — exactly one network call sends the old refresh token,
+    // and all awaiters share its success (rotated tokens visible via
+    // getState().tokens) or its rejection (no one-logs-out-one-succeeds
+    // divergence). See the module-level `refreshInFlight` comment.
+    if (refreshInFlight) {
+      return refreshInFlight;
+    }
+
+    const rotation = (async () => {
+      const t0 = Date.now();
+      console.log('[jot:auth] refreshTokens START');
+      const refreshed = await refreshAccessToken(tokens.refreshToken!);
+      const merged: StoredTokens = {
+        ...tokens,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken ?? tokens.refreshToken,
+        idToken: refreshed.idToken ?? tokens.idToken,
+        tokenType: refreshed.tokenType,
+        expiresAt: refreshed.expiresAt,
+        endpoint: refreshed.endpoint || tokens.endpoint,
+      };
+      await storeTokens(merged, 'refresh');
+      set({
+        tokens: merged,
+        baseUrl: merged.endpoint,
+        isAuthenticated: deriveAuthenticated(merged),
+      });
+      console.log(`[jot:auth] refreshTokens END — ${Date.now() - t0}ms`);
+    })().finally(() => {
+      // Clear on settle (success OR failure) so a caller arriving AFTER
+      // this rotation resolves triggers a NEW rotation rather than
+      // receiving the stale settled promise.
+      refreshInFlight = null;
     });
-    console.log(`[jot:auth] refreshTokens END — ${Date.now() - t0}ms`);
+    refreshInFlight = rotation;
+    return rotation;
   },
 
   loadStoredTokens: async () => {

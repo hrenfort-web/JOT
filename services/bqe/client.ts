@@ -57,25 +57,10 @@ function safePretty(v: unknown): string {
 
 export const bqeClient = axios.create({ timeout: REQUEST_TIMEOUT_MS });
 
-let refreshInFlight: Promise<void> | null = null;
-
-/**
- * Single-flight wrapper around useAuthStore.refreshTokens. Shared by both
- * the request interceptor (proactive refresh before writes) and the
- * response interceptor (reactive refresh after a 401) so the two paths
- * can't race and double-refresh.
- */
-async function refreshTokensOnceInFlight(): Promise<void> {
-  if (!refreshInFlight) {
-    refreshInFlight = useAuthStore
-      .getState()
-      .refreshTokens()
-      .finally(() => {
-        refreshInFlight = null;
-      });
-  }
-  await refreshInFlight;
-}
+// Refresh-token rotation is single-flighted inside useAuthStore.refreshTokens
+// itself (module-level guard), so both interceptor paths — and prewarm and
+// loadStoredTokens — share ONE in-flight rotation. The interceptors call
+// refreshTokens() directly; there is no client-local dedupe wrapper.
 
 bqeClient.interceptors.request.use(async (config) => {
   const state = useAuthStore.getState();
@@ -96,7 +81,7 @@ bqeClient.interceptors.request.use(async (config) => {
       `[jot:client] proactive token refresh before ${method.toUpperCase()} ${config.url ?? ''}`,
     );
     try {
-      await refreshTokensOnceInFlight();
+      await useAuthStore.getState().refreshTokens();
     } catch (err) {
       // Refresh failed — fall through and let the request fire with the
       // stale token. The response interceptor's 401 path will handle it
@@ -302,7 +287,7 @@ bqeClient.interceptors.response.use(
         throw error;
       }
       try {
-        await refreshTokensOnceInFlight();
+        await useAuthStore.getState().refreshTokens();
       } catch (refreshErr) {
         logError('client.refresh', refreshErr);
         await useAuthStore.getState().logout('session_expired');
