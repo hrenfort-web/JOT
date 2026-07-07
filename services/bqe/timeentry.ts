@@ -426,6 +426,18 @@ export async function deleteEntry(bqeId: string): Promise<void> {
   await bqeClient.delete(`/timeentry/${bqeId}`);
 }
 
+/**
+ * Existence probe for a single BQE entry. Live-tenant behavior (verified
+ * 2026-07-07 via the bqe-test harness): GET /timeentry/{id} returns
+ * 200 + body for an existing entry and 204 No Content — NOT 404 — for a
+ * deleted one. Used by the sync queue to distinguish "entry was deleted
+ * remotely" from a transient server error after a failed update PUT.
+ */
+export async function fetchEntryExists(bqeId: string): Promise<boolean> {
+  const response = await bqeClient.get(`/timeentry/${bqeId}`);
+  return response.status === 200 && response.data != null;
+}
+
 export async function loadLocalWeekEntries(
   resourceId: string,
   weekStart: Date | string,
@@ -756,9 +768,14 @@ export async function markEntryVersion(
   version: string | null,
   billStatus?: string | null,
 ): Promise<void> {
+  // retryCount/lastError reset for parity with markEntrySyncedWithBqeId:
+  // this marker also means "the row is now clean on the server" — a row
+  // that failed a queue attempt and later succeeds (via the queue's PUT
+  // branch or a direct edit) must not carry stale error state forward.
   await run(
     `UPDATE LocalTimeEntry
-     SET syncStatus = 'synced', version = ?, billStatus = COALESCE(?, billStatus)
+     SET syncStatus = 'synced', version = ?, billStatus = COALESCE(?, billStatus),
+         retryCount = 0, lastError = NULL
      WHERE id = ?`,
     [version, billStatus ?? null, localId],
   );
