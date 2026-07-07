@@ -32,6 +32,7 @@ import {
   setHoursValue,
 } from '../../utils/hourMath';
 import { fromIsoDay, getMonday, getSunday, getWeekDays, toIsoDay } from '../../utils/dateHelpers';
+import { useToday } from '../../hooks/useToday';
 import {
   REPEAT_THRESHOLD,
   REPEAT_TIMEOUT_MS,
@@ -119,9 +120,10 @@ export default function HoursEntryScreen() {
   const setSelectedDate = useEntryStore((s) => s.setSelectedDate);
 
   // `today` is the device's actual today — fed to WeekBar's `today` prop
-  // ONLY for the today-marker (accent day letter). It NO LONGER drives the
-  // visible week.
-  const today = useMemo(() => new Date(), []);
+  // ONLY for the today-marker (accent day letter). It does NOT drive the
+  // visible week (that derives from selectedDate). Live via useToday so the
+  // marker stays correct across an overnight background-resume (audit H-1).
+  const today = useToday();
 
   // Visible week is derived from selectedDate (the entry store's single
   // source of truth) so a past-week selection on home carries through to

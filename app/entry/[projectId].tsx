@@ -12,6 +12,7 @@ import { useEntryStore } from '../../store/useEntryStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { phaseMeta } from '../../utils/phaseMeta';
 import { fromIsoDay, getMonday, getWeekDays } from '../../utils/dateHelpers';
+import { useToday } from '../../hooks/useToday';
 import { loadLastUsedDateByPhase } from '../../services/bqe/timeentry';
 import type { LocalProject } from '../../db/schema';
 
@@ -100,9 +101,10 @@ export default function PhaseSelectionScreen() {
   const resourceId = useAuthStore((s) => s.user?.id ?? null);
 
   // `today` is the device's actual today — fed to WeekBar's `today` prop
-  // ONLY for the today-marker (accent day letter). It NO LONGER drives the
-  // visible week.
-  const today = useMemo(() => new Date(), []);
+  // ONLY for the today-marker (accent day letter). It does NOT drive the
+  // visible week (that derives from selectedDate). Live via useToday so the
+  // marker stays correct across an overnight background-resume (audit H-1).
+  const today = useToday();
 
   // Visible week is derived from selectedDate so a past-week selection on
   // home carries through. Defensive parse: empty/malformed/stale

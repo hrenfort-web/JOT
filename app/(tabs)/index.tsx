@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -21,9 +21,9 @@ import {
   getSunday,
   getWeekDays,
   isSameDay,
-  startOfDay,
   toIsoDay,
 } from '../../utils/dateHelpers';
+import { useToday } from '../../hooks/useToday';
 import { WeekBar } from '../../components/WeekBar';
 import { SummaryPill } from '../../components/SummaryPill';
 import { ProjectCard } from '../../components/ProjectCard';
@@ -59,7 +59,11 @@ const MAX_WEEK_OFFSET = 4;
 
 export default function HomeScreen() {
   const router = useRouter();
-  const today = useMemo(() => startOfDay(new Date()), []);
+  // Live "today" — recomputes on AppState 'active' when the calendar day
+  // has rolled over (audit H-1). Drives the whole week frame below plus the
+  // header/WeekBar, so an overnight background-resume no longer leaves the
+  // home screen (and the date written to BQE via selectedDate) a day stale.
+  const today = useToday();
 
   const [weekOffset, setWeekOffset] = useState(0);
   const referenceDate = useMemo(() => addWeeks(today, weekOffset), [today, weekOffset]);
@@ -134,6 +138,12 @@ export default function HomeScreen() {
     refreshWeek();
   }, [weekOffset, refreshWeek]);
 
+  // Week-navigation reset: when the user moves to a different week, collapse
+  // the "more projects" expander and pick a sensible default selected day
+  // (today for the current week, that week's Monday otherwise). Keyed on
+  // weekOffset ONLY — deliberately NOT on `today`, so an overnight day
+  // rollover (which advances `today` via useToday) does not re-fire this and
+  // clobber a day the user tapped. The rollover case is handled below.
   useEffect(() => {
     setShowAllProjects(false);
     if (isCurrentWeek) {
@@ -141,7 +151,25 @@ export default function HomeScreen() {
     } else {
       setSelectedDate(toIsoDay(monday));
     }
-  }, [weekOffset, isCurrentWeek, monday, today, setSelectedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekOffset]);
+
+  // Day-rollover guard (audit H-1): when the app resumes on a new calendar
+  // day, `today` advances. Roll selectedDate forward to the new today ONLY
+  // IF the user was still sitting on the OLD today in the current week —
+  // i.e. they hadn't deliberately tapped a different day and weren't viewing
+  // a past/future week. A deliberate selection or a non-current-week view
+  // survives the resume untouched; only the today reference/highlight moves.
+  const prevTodayIsoRef = useRef(toIsoDay(today));
+  useEffect(() => {
+    const newTodayIso = toIsoDay(today);
+    if (newTodayIso === prevTodayIsoRef.current) return;
+    const oldTodayIso = prevTodayIsoRef.current;
+    prevTodayIsoRef.current = newTodayIso;
+    if (weekOffset === 0 && selectedDate === oldTodayIso) {
+      setSelectedDate(newTodayIso);
+    }
+  }, [today, weekOffset, selectedDate, setSelectedDate]);
 
   // Load the 90-day entry window that drives the picker sort. Re-runs when
   // the user changes or the project cache size changes (which fires after
