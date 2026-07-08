@@ -8,7 +8,25 @@ import {
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_VERSION = '2023-06-01';
-const MAX_TOKENS = 2048;
+// Raised 2048 → 4096 so a dense sheet (~30+ entries) fits in one pass. The
+// TimesheetTooLargeError path below still catches a sheet that overflows
+// even 4096, so this is a headroom bump, not the whole fix (audit H-8).
+const MAX_TOKENS = 4096;
+
+/**
+ * Thrown when the model's response stopped on `max_tokens` — the JSON is
+ * truncated because the timesheet had more entries than the token budget
+ * could emit. Distinct from a parse/image failure so the processing screen
+ * can tell the truth ("too many entries — scan half at a time") instead of
+ * the misleading "try a clearer photo" (a sharper photo can't shrink the
+ * entry count). See app/scan-processing.tsx's catch. (audit H-8)
+ */
+export class TimesheetTooLargeError extends Error {
+  constructor() {
+    super('Timesheet has too many entries to scan in one pass (max_tokens).');
+    this.name = 'TimesheetTooLargeError';
+  }
+}
 
 export interface ParsedEntry {
   day: string;
@@ -104,7 +122,19 @@ export async function parseTimesheetImage(
     );
   }
 
-  const data = (await response.json()) as { content?: Array<{ type: string; text?: string }> };
+  const data = (await response.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+    stop_reason?: string | null;
+  };
+  // Detect a token-budget overflow BEFORE parsing: a `max_tokens` stop means
+  // the JSON is truncated (expected), so parseJsonResponse would throw and
+  // land in scan-processing's generic "try a clearer photo" catch — which is
+  // misleading, since a sharper photo can't shrink the entry count. Surface a
+  // distinct, honest error instead (audit H-8). This check MUST precede
+  // parseJsonResponse so truncation never falls through to the generic path.
+  if (data.stop_reason === 'max_tokens') {
+    throw new TimesheetTooLargeError();
+  }
   const text = extractText(data);
   return parseJsonResponse(text);
 }

@@ -16,7 +16,7 @@ import { useScanStore } from '../store/useScanStore';
 import { useProjectStore } from '../store/useProjectStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { buildScanLookup, type BuildScanLookupOptions } from '../services/ai/matcher';
-import { parseTimesheetImage } from '../services/ai/scanner';
+import { parseTimesheetImage, TimesheetTooLargeError } from '../services/ai/scanner';
 import { loadLocalEntriesInRange } from '../services/bqe/timeentry';
 import { logError } from '../services/errors';
 import { FIRM_SETTING_KEYS } from '../services/firmSettings';
@@ -162,6 +162,12 @@ export default function ProcessingScreen() {
         logError('scan.process', e);
         if ((e as Error).name === 'AbortError') {
           setError('Processing took too long. Try again or enter manually.');
+        } else if (e instanceof TimesheetTooLargeError) {
+          // Honest message for a token-budget overflow — NOT the generic
+          // "try a clearer photo" copy, which can't fix too-many-entries.
+          setError(
+            'This timesheet has too many entries to scan at once. Try scanning half at a time.',
+          );
         } else {
           setError(
             "We couldn't read this image. Try a clearer photo, or enter your hours manually.",
