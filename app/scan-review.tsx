@@ -23,13 +23,14 @@ import { useScanStore, type ReviewEntry } from '../store/useScanStore';
 import { useToastStore } from '../store/useToastStore';
 import {
   formatHours,
+  fromIsoDay,
   getMonday,
   getSunday,
   getWeekDays,
   toIsoDay,
 } from '../utils/dateHelpers';
 import { phaseMeta } from '../utils/phaseMeta';
-import type { ParsedEntry, ParsedTimesheet } from '../services/ai/scanner';
+import type { ParsedEntry, ParsedFlag, ParsedTimesheet } from '../services/ai/scanner';
 import {
   validateEntryDate,
   validateHours,
@@ -186,6 +187,11 @@ export default function ReviewScreen() {
     [entries],
   );
 
+  const weekDayIsoSet = useMemo(
+    () => new Set(weekDays.map(toIsoDay)),
+    [weekDays],
+  );
+
   const visibleDays = useMemo(() => {
     const set = new Set(entries.map((e) => e.day));
     return weekDays.filter((d) => {
@@ -195,6 +201,18 @@ export default function ReviewScreen() {
       return isWeekday || set.has(iso);
     });
   }, [weekDays, entries]);
+
+  // Distinct entry days that fall OUTSIDE the review week (past OR future) —
+  // rendered in an "Other days" section so no entry is counted/submitted
+  // without being shown (audit H-3). Sorted chronologically (ISO strings
+  // sort lexically = chronologically). Empty in the common all-in-week case,
+  // so the section doesn't render and the normal path is unchanged.
+  const strayDays = useMemo(() => {
+    const days = new Set(
+      entries.filter((e) => !weekDayIsoSet.has(e.day)).map((e) => e.day),
+    );
+    return Array.from(days).sort();
+  }, [entries, weekDayIsoSet]);
 
   if (!parsed) {
     return (
@@ -589,6 +607,85 @@ export default function ReviewScreen() {
           );
         })}
 
+        {/*
+          "Other days" — entries the model dated outside the review week.
+          Without this they rendered nowhere yet were still counted and
+          submitted (audit H-3). Each stray shows its REAL date (with year,
+          so it can't be misread as this week) and is flagged, so the
+          existing unresolved-flag submit-gate blocks submission until the
+          user confirms (opens → Save) or removes it. No "Add entry" button
+          here — you can't add to an arbitrary off-week day from this screen.
+          Renders only when strays exist; the common all-in-week path is
+          visually unchanged.
+        */}
+        {strayDays.length > 0 ? (
+          <View style={styles.strayGroup}>
+            <View style={styles.strayHeaderRow}>
+              <Ionicons name="warning-outline" size={16} color={colors.accent} />
+              <Text style={styles.strayHeaderTitle}>Other days</Text>
+            </View>
+            <Text style={styles.strayHeaderSub}>
+              These entries are dated outside this week. Review each — confirm or remove — before submitting.
+            </Text>
+            {strayDays.map((iso) => {
+              const dayEntries = entries.filter((e) => e.day === iso);
+              const dayHours = dayEntries.reduce((s, e) => s + e.hours, 0);
+              const d = fromIsoDay(iso);
+              return (
+                <View key={iso} style={styles.dayGroup}>
+                  <View style={styles.dayHeader}>
+                    <Ionicons name="calendar-outline" size={16} color={colors.accent} />
+                    <Text style={styles.dayHeaderTitle}>
+                      {d.toLocaleDateString(undefined, { weekday: 'long' })}
+                    </Text>
+                    <Text style={styles.dayHeaderDate}>
+                      {d.toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </Text>
+                    <View style={{ flex: 1 }} />
+                    {dayHours > 0 ? (
+                      <Text style={styles.dayHeaderHours}>{formatHours(dayHours)}h</Text>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.dayBody}>
+                    {dayEntries.map((entry) =>
+                      editingId === entry.id ? (
+                        <ReviewEntryEditor
+                          key={entry.id}
+                          initial={{
+                            projectId: entry.projectId,
+                            phaseProjectId: entry.phaseProjectId,
+                            hours: entry.hours,
+                            memo: entry.memo,
+                          }}
+                          showRemove
+                          onSave={(v) => handleSaveEdit(entry.id, v)}
+                          onRemove={() => {
+                            removeEntry(entry.id);
+                            setEditingId(null);
+                          }}
+                          onCancel={() => setEditingId(null)}
+                        />
+                      ) : (
+                        <EntryDisplayRow
+                          key={entry.id}
+                          entry={entry}
+                          projectsById={projectsById}
+                          onEdit={() => setEditingId(entry.id)}
+                        />
+                      ),
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+
         <View style={styles.totalBar}>
           <View>
             <Text style={styles.totalLabel}>
@@ -812,12 +909,36 @@ function parseOriginalIndex(id: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Reason attached to entries the model dated outside the review week. Shown
+// in the entry's flag chip and (via the submit-gate) in the block toast.
+const STRAY_DAY_FLAG_REASON =
+  'This date is outside the current week — tap to confirm it, or remove it.';
+
 function parsedToReview(parsed: ParsedTimesheet, weekStart: Date): ReviewEntry[] {
+  // ISO set for the review week (the 7 days visibleDays renders). An entry
+  // whose day isn't in this set is a "stray": it would render in no day-group
+  // yet still be counted and submitted (audit H-3). We flag every stray with
+  // the EXISTING flag field so validateReviewEntry's unresolved-flag gate
+  // blocks submit until the user opens each one (seeing its real date in the
+  // "Other days" section) and confirms via Save or removes it.
+  const weekIsoSet = new Set(getWeekDays(weekStart, 7).map(toIsoDay));
   return parsed.entries.map((e, i) => {
-    const flag = parsed.flags.find((f) => f.entryIndex === i) ?? null;
+    const day = aiDayToIso(e.day, weekStart);
+    const aiFlag = parsed.flags.find((f) => f.entryIndex === i) ?? null;
+    const isStray = !weekIsoSet.has(day);
+    // Stray → force a flag (preserving any AI flag reason alongside it).
+    // In-week → keep whatever the AI flagged (or null).
+    const flag: ParsedFlag | null = isStray
+      ? {
+          entryIndex: i,
+          reason: aiFlag
+            ? `${STRAY_DAY_FLAG_REASON} (${aiFlag.reason})`
+            : STRAY_DAY_FLAG_REASON,
+        }
+      : aiFlag;
     return {
       id: `parsed-${i}`,
-      day: aiDayToIso(e.day, weekStart),
+      day,
       projectId: e.projectId,
       phaseProjectId: e.phaseProjectId,
       // Preserve the AI's best guess at the handwritten name even when it
@@ -927,6 +1048,29 @@ const styles = StyleSheet.create({
   },
   dayGroup: {
     gap: 8,
+  },
+  // "Other days" (out-of-week strays) section wrapper + heading. Accent
+  // heading so it reads as a call-to-attention distinct from the neutral
+  // in-week day groups it sits below.
+  strayGroup: {
+    gap: 8,
+    marginTop: 4,
+  },
+  strayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 4,
+  },
+  strayHeaderTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  strayHeaderSub: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    paddingHorizontal: 4,
   },
   dayHeader: {
     flexDirection: 'row',
