@@ -1,7 +1,5 @@
-import type { AxiosResponse } from 'axios';
 import { bqeClient, fetchAllPages } from './client';
-import { decodeIdTokenSub, fetchUserInfo, StoredTokens } from './auth';
-import { unwrapList } from './utils';
+import { fetchUserInfo, StoredTokens } from './auth';
 import { upsertMany, getAll } from '../../db/database';
 import { LocalEmployee, LocalEmployeeRow } from '../../db/schema';
 
@@ -18,22 +16,6 @@ export interface BqeEmployee {
   [key: string]: unknown;
 }
 
-type AnyRow = Record<string, unknown>;
-
-const FIRST_NAME_KEYS = ['firstName', 'FirstName', 'first_name'];
-const LAST_NAME_KEYS = ['lastName', 'LastName', 'last_name'];
-const DISPLAY_NAME_KEYS = ['displayName', 'DisplayName', 'fullName', 'FullName', 'name', 'Name'];
-const EMAIL_KEYS = ['email', 'Email'];
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function pickStr(row: AnyRow, keys: string[]): string | null {
-  for (const k of keys) {
-    const v = row[k];
-    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
-  }
-  return null;
-}
-
 function stringFrom(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const trimmed = v.trim();
@@ -47,121 +29,26 @@ function authHeaders(tokens: StoredTokens): Record<string, string> {
   };
 }
 
-// Run one BQE employee-lookup attempt and normalize the response shape.
-// Returns the matched employee, or null when not found / multi-match / errored.
-async function tryLookup(
-  description: string,
-  request: () => Promise<AxiosResponse>,
-): Promise<BqeEmployee | null> {
-  if (__DEV__) console.log(`[jot:employee] try ${description}`);
-  try {
-    const resp = await request();
-    if (resp.status === 204) {
-      if (__DEV__) console.log('  →', '204 (no content)');
-      return null;
-    }
-    const data = resp.data;
-    // Wrapped list shapes: { value: [...] } / { data: [...] } / { items: [...] }
-    const list = unwrapList<BqeEmployee>(data);
-    if (list.length > 0) {
-      if (__DEV__) console.log('  →', list.length, 'row(s)');
-      if (list.length === 1) return list[0];
-      if (__DEV__) {
-        console.log('  →', 'multi-match — preview =', list.slice(0, 3).map((r) => ({
-          id: (r as AnyRow).id,
-          name: pickStr(r as AnyRow, DISPLAY_NAME_KEYS),
-        })));
-      }
-      return list[0];
-    }
-    // Single-object response (path-style /employee/{id})
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      const obj = data as AnyRow;
-      if (typeof obj.id === 'string') {
-        if (__DEV__) console.log('  →', 'single object →', obj.id);
-        return obj as unknown as BqeEmployee;
-      }
-    }
-    if (__DEV__) console.log('  →', '0 rows');
-    return null;
-  } catch (e) {
-    const err = e as { response?: { status?: number; data?: unknown }; message?: string };
-    const status = err?.response?.status;
-    const body = err?.response?.data;
-    if (__DEV__) {
-      const bodyStr =
-        typeof body === 'string'
-          ? body.slice(0, 160)
-          : body
-            ? JSON.stringify(body).slice(0, 160)
-            : err?.message ?? '<no body>';
-      console.log('  →', status ?? 'NO_RESPONSE', 'error:', bodyStr);
-    }
-    return null;
-  }
-}
-
-async function bruteForceMatch(
-  tokens: StoredTokens,
-  candidates: { source: string; value: string }[],
-): Promise<BqeEmployee | null> {
-  if (__DEV__) {
-    console.log('[jot:employee] All targeted lookups failed — paginating all employees');
-  }
-  const all = await fetchAllPages<BqeEmployee>('/employee', {}, {
-    baseURL: tokens.endpoint,
-    headers: authHeaders(tokens),
-  });
-  if (__DEV__) console.log('[jot:employee] paginated', all.length, 'total employees');
-
-  if (__DEV__) {
-    const targets = candidates.map((c) => `${c.source}=${c.value}`).join(' | ');
-    console.log('[jot:employee] searching for UUID match against:', targets);
-  }
-
-  for (let i = 0; i < all.length; i += 1) {
-    const row = all[i] as AnyRow;
-    const uuidFields: Record<string, string> = {};
-    for (const [k, v] of Object.entries(row)) {
-      if (typeof v === 'string' && UUID_RE.test(v)) {
-        uuidFields[k] = v;
-      }
-    }
-    if (__DEV__) {
-      console.log(`  [${i}]`, {
-        id: row.id,
-        first: pickStr(row, FIRST_NAME_KEYS),
-        last: pickStr(row, LAST_NAME_KEYS),
-        display: pickStr(row, DISPLAY_NAME_KEYS),
-        email: pickStr(row, EMAIL_KEYS),
-        uuids: uuidFields,
-      });
-    }
-    for (const { source, value } of candidates) {
-      for (const [field, fieldValue] of Object.entries(uuidFields)) {
-        if (fieldValue === value) {
-          if (__DEV__) {
-            console.log(
-              '[jot:employee] FOUND brute-force match: employee.' +
-                field +
-                ' === ' +
-                source +
-                ' (' +
-                value +
-                ')',
-            );
-          }
-          return all[i];
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
+/**
+ * Resolve the current user's BQE identity for login.
+ *
+ * Identity comes from OIDC `GET /idp/connect/userinfo` — an endpoint EVERY
+ * BQE user can read — NOT from the `/employee` roster list, which is
+ * admin-gated and 403s for a standard (non-admin) timekeeper. Harness
+ * testing confirmed `userinfo.user_id` === the employee `id` (the BQE
+ * resourceId) exactly, so `user_id` is authoritative.
+ *
+ * Flow:
+ *   1. userinfo → user_id (the resourceId). Absent user_id is the ONLY hard
+ *      failure — without it we have no id to charge time against.
+ *   2. Synthesize the full user object from userinfo claims (name/email).
+ *      This alone is a complete, loggable identity.
+ *   3. ONE optional enrichment: GET /employee/{user_id} (path-style self-
+ *      read). ANY failure — 403 / 404 / 204 / network / id-less body — is
+ *      caught and ignored; login proceeds on the synthesized identity. The
+ *      roster list is never called.
+ */
 export async function fetchCurrentEmployee(tokens: StoredTokens): Promise<BqeEmployee> {
-  const sub = tokens.idToken ? decodeIdTokenSub(tokens.idToken) : null;
   let userInfo: Record<string, unknown> | null = null;
   try {
     userInfo = await fetchUserInfo(tokens.accessToken);
@@ -169,90 +56,83 @@ export async function fetchCurrentEmployee(tokens: StoredTokens): Promise<BqeEmp
     if (__DEV__) console.log('[jot:employee] userinfo fetch failed:', e);
   }
 
+  // userinfo.user_id is the BQE resourceId (=== employee.id, verified live).
   const userId = stringFrom(userInfo?.user_id) ?? stringFrom(userInfo?.userId);
+  if (!userId) {
+    // The ONLY hard failure. No user_id → no resourceId → we cannot create
+    // time entries. Distinct message so login surfaces the real cause
+    // instead of a generic parse/network error.
+    throw new Error(
+      'BQE userinfo did not return user_id; cannot resolve identity. ' +
+        'Confirm this user has BQE Core access, or contact your administrator.',
+    );
+  }
+
+  // Synthesize a complete identity from userinfo claims — enough to log in
+  // and charge time with no /employee call at all.
+  const given = stringFrom(userInfo?.given_name);
+  const family = stringFrom(userInfo?.family_name);
+  const email = stringFrom(userInfo?.email);
+  const nameClaim = stringFrom(userInfo?.name);
+  const joined = [given, family].filter((s): s is string => !!s).join(' ');
+  const synthesizedDisplayName =
+    nameClaim ?? (joined.length > 0 ? joined : null) ?? email ?? undefined;
+
+  const user: BqeEmployee = {
+    id: userId,
+    displayName: synthesizedDisplayName,
+    firstName: given ?? undefined,
+    lastName: family ?? undefined,
+    email: email ?? undefined,
+    userId,
+  };
 
   if (__DEV__) {
-    console.log('[jot:employee] tokens.endpoint =', tokens.endpoint);
-    console.log('[jot:employee] userinfo.user_id =', userId);
-    console.log('[jot:employee] id_token sub    =', sub);
+    console.log('[jot:employee] resolved identity from userinfo — id =', userId);
   }
 
-  const baseURL = tokens.endpoint;
-  const headers = authHeaders(tokens);
-
-  // Targeted lookups in order. First one that returns a row wins.
-  // BQE support said userinfo.user_id is the link to /employee but didn't
-  // specify the field name — try the most likely options.
-  const attempts: Array<{ desc: string; run: () => Promise<AxiosResponse> }> = [];
-
-  if (userId) {
-    attempts.push({
-      desc: `GET /employee/${userId} (path with user_id)`,
-      run: () => bqeClient.get(`/employee/${userId}`, { baseURL, headers }),
+  // Optional enrichment: a single path-style self-read of the user's OWN
+  // employee record. Standard users can read their own record; but if this
+  // 403s / 404s / 204s / errors / returns no id we IGNORE it — the
+  // synthesized user above is already valid and login must not block on it.
+  // Explicit baseURL + headers because the axios interceptor reads tokens
+  // from the auth store, which isn't populated until AFTER login() (this
+  // runs before login()).
+  try {
+    const resp = await bqeClient.get(`/employee/${userId}`, {
+      baseURL: tokens.endpoint,
+      headers: authHeaders(tokens),
     });
-  }
-  if (sub && sub !== userId) {
-    attempts.push({
-      desc: `GET /employee/${sub} (path with sub)`,
-      run: () => bqeClient.get(`/employee/${sub}`, { baseURL, headers }),
-    });
-  }
-  if (userId) {
-    attempts.push({
-      desc: `where id='${userId}'`,
-      run: () =>
-        bqeClient.get('/employee', { baseURL, headers, params: { where: `id='${userId}'` } }),
-    });
-    attempts.push({
-      desc: `where Id='${userId}' (PascalCase)`,
-      run: () =>
-        bqeClient.get('/employee', { baseURL, headers, params: { where: `Id='${userId}'` } }),
-    });
-    attempts.push({
-      desc: `where userInfoId='${userId}'`,
-      run: () =>
-        bqeClient.get('/employee', {
-          baseURL,
-          headers,
-          params: { where: `userInfoId='${userId}'` },
-        }),
-    });
-    attempts.push({
-      desc: `where token='${userId}'`,
-      run: () =>
-        bqeClient.get('/employee', { baseURL, headers, params: { where: `token='${userId}'` } }),
-    });
-  }
-
-  for (const a of attempts) {
-    const found = await tryLookup(a.desc, a.run);
-    if (found) {
-      if (__DEV__) {
-        console.log('[jot:employee] MATCHED via', a.desc, '→', {
-          id: (found as AnyRow).id,
-          email: pickStr(found as AnyRow, EMAIL_KEYS),
-          displayName: pickStr(found as AnyRow, DISPLAY_NAME_KEYS),
-        });
-      }
-      return found;
+    const row = resp?.data;
+    const obj =
+      row && typeof row === 'object' && !Array.isArray(row)
+        ? (row as Record<string, unknown>)
+        : null;
+    if (obj && stringFrom(obj.id)) {
+      const displayName = stringFrom(obj.displayName);
+      const firstName = stringFrom(obj.firstName);
+      const lastName = stringFrom(obj.lastName);
+      const defaultGroupId = stringFrom(obj.defaultGroupId);
+      const securityProfileId = stringFrom(obj.securityProfileId);
+      if (displayName) user.displayName = displayName;
+      if (firstName) user.firstName = firstName;
+      if (lastName) user.lastName = lastName;
+      // Attached via BqeEmployee's index signature — used by activity
+      // resolution / future gating when present.
+      if (defaultGroupId) user.defaultGroupId = defaultGroupId;
+      if (securityProfileId) user.securityProfileId = securityProfileId;
+      if (__DEV__) console.log('[jot:employee] enriched from GET /employee/{id}');
+    }
+  } catch (e) {
+    if (__DEV__) {
+      console.log(
+        '[jot:employee] enrichment GET /employee/{id} failed (non-fatal, using userinfo identity):',
+        e instanceof Error ? e.message : e,
+      );
     }
   }
 
-  // Last resort: paginate every employee and search for any UUID field whose
-  // value matches our user_id or sub. This will conclusively reveal the
-  // BQE-side field name so we can hard-code it next time.
-  const candidates: { source: string; value: string }[] = [];
-  if (userId) candidates.push({ source: 'userinfo.user_id', value: userId });
-  if (sub && sub !== userId) candidates.push({ source: 'id_token.sub', value: sub });
-
-  if (candidates.length > 0) {
-    const brute = await bruteForceMatch(tokens, candidates);
-    if (brute) return brute;
-  }
-
-  throw new Error(
-    'Could not resolve current user in /employee. None of the targeted lookups matched and no employee row contains a UUID field equal to userinfo.user_id or id_token.sub. Contact your administrator to confirm this user has an Employee record.',
-  );
+  return user;
 }
 
 export async function fetchEmployees(): Promise<BqeEmployee[]> {

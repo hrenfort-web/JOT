@@ -129,10 +129,14 @@ export async function prewarmBqeConnection(opts: PrewarmOptions = {}): Promise<v
     }
 
     try {
-      // Lightweight warmup GET. /employee?fields=id&page=1,1 returns at
-      // most one row with a single field — minimal payload, exercises
-      // the full TLS + auth + tenant-endpoint resolution path.
-      await bqeClient.get('/employee', {
+      // Lightweight warmup GET. /project?fields=id&page=1,1 returns at most
+      // one row with a single field — minimal payload, exercises the full
+      // TLS + auth + tenant-endpoint resolution path. Uses /project (which a
+      // standard timekeeper can read to log time against) rather than
+      // /employee, whose roster list is admin-gated and 403s for non-admin
+      // users — the warmup must never fail on a permission the app doesn't
+      // otherwise need.
+      await bqeClient.get('/project', {
         params: { fields: 'id', page: '1,1' },
       });
     } catch (err) {

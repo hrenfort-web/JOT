@@ -30,10 +30,28 @@ interface SyncStep {
   run: (isStale?: () => boolean) => Promise<number>;
 }
 
+// The team roster (/employee list) is admin-gated: a standard timekeeper
+// gets 403. That data is only consumed by the admin stats screen, so a
+// denied user losing it is harmless — but a THROWN 403 here would abort the
+// remaining sync (activity-group warm-up + store refreshes), needlessly
+// degrading the entry screen. Wrap it so a failure logs and returns 0
+// instead of propagating. Admins (who can read the roster) are unaffected.
+async function fetchTeamGraceful(isStale?: () => boolean): Promise<number> {
+  try {
+    return await fetchAndSaveEmployees(isStale);
+  } catch (e) {
+    console.warn(
+      '[jot:sync] Loading team failed (non-fatal — roster is admin-only, likely a standard-user 403):',
+      e instanceof Error ? e.message : e,
+    );
+    return 0;
+  }
+}
+
 const STEPS: SyncStep[] = [
   { label: 'Loading projects', run: fetchAndSaveProjects },
   { label: 'Loading activities', run: fetchAndSaveActivities },
-  { label: 'Loading team', run: fetchAndSaveEmployees },
+  { label: 'Loading team', run: fetchTeamGraceful },
 ];
 
 export async function runInitialSync(
