@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   CreateTimeEntryPayload,
+  claimEntryForCreate,
   createBatchEntries,
   createEntry,
   deleteEntry as bqeDeleteEntry,
@@ -13,6 +14,7 @@ import {
   loadPendingEntries,
   markEntriesSubmissionStatus,
   markEntriesSynced,
+  markEntryCreateUncertain,
   markEntryFailedWithError,
   markEntrySyncedWithBqeId,
   markEntryVersion,
@@ -26,7 +28,7 @@ import { toIsoDay } from '../services/bqe/utils';
 import { isOnline } from '../services/sync/connectivity';
 import { processQueue } from '../services/sync/queue';
 import { rescheduleAllReminders } from '../services/notifications/reminders';
-import { extractBqeErrorMessage } from '../services/errors';
+import { classifyWriteFailure, extractBqeErrorMessage } from '../services/errors';
 import { applySourceTag } from '../utils/sourceTag';
 import { useAuthStore } from './useAuthStore';
 import { run } from '../db/database';
@@ -161,11 +163,15 @@ interface EntryState {
     entry: NewEntryInput,
   ) => Promise<
     | { ok: true; queued: false; localId: number; bqeId: string }
+    // queued: the row is saved locally and the sync queue owns its create
+    // (offline, or the queue claimed it first).
     | { ok: true; queued: true; localId: number }
-    // `httpError` distinguishes "BQE responded with a 4xx/5xx body" (true —
-    // user-actionable; show the message) from "network/timeout, no
-    // response" (false — silent queue, retry later). Either way the entry
-    // is saved locally so nothing is lost.
+    // `httpError` true = classifyWriteFailure said 'rejected': the server
+    // answered 4xx, the row is now 'failed' and `error` is the server's
+    // reason — show it. false = 'uncertain' (timeout, network, 5xx, 408,
+    // 429): the row is back in the queue flagged createUncertain so the
+    // queue reconciles before any retry. Either way the entry is saved
+    // locally so nothing is lost.
     | { ok: false; localId: number; error: string; httpError: boolean }
   >;
   submitParsedBatch: (
@@ -315,6 +321,19 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       return { ok: true as const, queued: true as const, localId };
     }
 
+    // Atomic ownership: the row was inserted 'pending' above, so a queue
+    // drain triggered in the meantime (connectivity flip, AppState active)
+    // may already have claimed it. Only the claim winner POSTs; the loser
+    // reports "queued" and lets the owner finish. See the state machine at
+    // the top of services/sync/queue.ts.
+    const claimed = await claimEntryForCreate(localId);
+    if (!claimed) {
+      console.log(`[jot:sync] claim skip localId=${localId} (submitEntry; queue owns it)`);
+      await get().refreshLocal();
+      return { ok: true as const, queued: true as const, localId };
+    }
+    console.log(`[jot:sync] claim ok localId=${localId} (submitEntry)`);
+
     try {
       // Source tag goes in `description` only — memo is reserved for user
       // content per Quality Floor. See utils/sourceTag for format + rationale.
@@ -335,21 +354,28 @@ export const useEntryStore = create<EntryState>((set, get) => ({
         created.version != null ? String(created.version) : null,
         created.billStatus ?? null,
       );
+      console.log(`[jot:sync] post ok localId=${localId} bqeId=${created.id}`);
       await get().refreshLocal();
       return { ok: true as const, queued: false as const, localId, bqeId: created.id };
     } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to submit entry';
+      if (classifyWriteFailure(e) === 'rejected') {
+        // The server answered and declined. Nothing was created; mark the
+        // row failed with the server's reason so the row and the toast
+        // both say why.
+        const reason = extractBqeErrorMessage(e) ?? message;
+        await markEntryFailedWithError(localId, reason);
+        console.log(`[jot:sync] rejected localId=${localId} message=${reason}`);
+        await get().refreshLocal();
+        return { ok: false as const, localId, error: reason, httpError: true };
+      }
+      // Outcome unknown (timeout, network, 5xx, 408, 429): the write may
+      // have landed. Hand the row back to the queue flagged uncertain so it
+      // reconciles against the server before any retry.
+      await markEntryCreateUncertain(localId, message);
+      console.log(`[jot:sync] uncertain localId=${localId} reason=${message}`);
       await get().refreshLocal();
-      // Distinguish "BQE rejected it" (httpError true → surface the message
-      // to the user) from "couldn't reach BQE" (httpError false → silent
-      // queue, retry on reconnect). Either way the entry is already saved
-      // locally above, so nothing is lost.
-      const bqeMsg = extractBqeErrorMessage(e);
-      return {
-        ok: false as const,
-        localId,
-        error: bqeMsg ?? (e instanceof Error ? e.message : 'Failed to submit entry'),
-        httpError: bqeMsg !== null,
-      };
+      return { ok: false as const, localId, error: message, httpError: false };
     }
   },
 
@@ -437,6 +463,11 @@ export const useEntryStore = create<EntryState>((set, get) => ({
     // the good entries land and the bad ones surface their own errors.
     try {
       await createBatchEntries(payloads);
+      // Audit item H-5 (out of scope for H-2): the batch fast path POSTs
+      // rows that are still 'pending' without claiming them, and marks
+      // them synced without a bqeId. A concurrent queue drain could claim
+      // and POST the same rows, and the next week fetch inserts separate
+      // rows for the server copies.
       await markEntriesSynced(localIds);
       await get().refreshLocal();
       return {
@@ -457,10 +488,22 @@ export const useEntryStore = create<EntryState>((set, get) => ({
       // change there flows through automatically.
       const failures: BatchFailure[] = [];
       const successIds: number[] = [];
+      // Rows the queue now owns: either it claimed them before we could,
+      // or their POST outcome is unknown and they went back to the queue
+      // flagged createUncertain. They are neither successes nor failures
+      // here — they land (or reconcile) on the next drain.
+      const deferredIds: number[] = [];
 
       for (let i = 0; i < payloads.length; i++) {
         const payload = payloads[i];
         const localId = localIds[i];
+        const claimed = await claimEntryForCreate(localId);
+        if (!claimed) {
+          console.log(`[jot:sync] claim skip localId=${localId} (batch fallback; queue owns it)`);
+          deferredIds.push(localId);
+          continue;
+        }
+        console.log(`[jot:sync] claim ok localId=${localId} (batch fallback)`);
         try {
           const created = await createEntry(payload);
           await markEntrySyncedWithBqeId(
@@ -470,15 +513,14 @@ export const useEntryStore = create<EntryState>((set, get) => ({
             created.billStatus ?? null,
           );
           successIds.push(localId);
+          console.log(`[jot:sync] post ok localId=${localId} bqeId=${created.id}`);
           console.log(
             `[jot:batch-fallback] entry ${i + 1}/${payloads.length} succeeded — bqeId=${created.id}`,
           );
         } catch (entryErr) {
           const status = extractHttpStatus(entryErr);
-          const bqeMsg = extractBqeErrorMessage(entryErr);
-          const errStr =
-            bqeMsg ??
-            (entryErr instanceof Error ? entryErr.message : 'Submit failed');
+          const message =
+            entryErr instanceof Error ? entryErr.message : 'Submit failed';
           // [jot:bqe-response] from client.ts already logs the full body
           // separately — duplicating the body inline here makes the
           // [jot:batch-fallback] trail self-contained (one grep yields
@@ -488,30 +530,41 @@ export const useEntryStore = create<EntryState>((set, get) => ({
             `[jot:batch-fallback] entry ${i + 1}/${payloads.length} failed — ` +
               `status=${status ?? 'no-response'} body=${bodyStr}`,
           );
-          await markEntryFailedWithError(localId, errStr);
-          failures.push({
-            inputIndex: i,
-            localId,
-            error: errStr,
-            httpError: bqeMsg !== null,
-          });
+          if (classifyWriteFailure(entryErr) === 'rejected') {
+            const reason = extractBqeErrorMessage(entryErr) ?? message;
+            await markEntryFailedWithError(localId, reason);
+            console.log(`[jot:sync] rejected localId=${localId} message=${reason}`);
+            failures.push({
+              inputIndex: i,
+              localId,
+              error: reason,
+              httpError: true,
+            });
+          } else {
+            // Unknown outcome: not a failure the user can fix, and a
+            // "Retry failed" re-insert would risk a duplicate. The queue
+            // reconciles it against the server before any retry.
+            await markEntryCreateUncertain(localId, message);
+            console.log(`[jot:sync] uncertain localId=${localId} reason=${message}`);
+            deferredIds.push(localId);
+          }
         }
       }
 
       await get().refreshLocal();
 
       if (failures.length === 0) {
-        // Batch endpoint hated something, but every per-entry POST
-        // worked. Probably a batch-endpoint quirk on BQE's side rather
-        // than a real data problem with any entry. Treat as full success.
+        // Every per-entry POST either worked or is now owned by the queue.
+        // queued=true when anything was deferred so the review screen says
+        // "saved locally — will sync" rather than "submitted".
         return {
           ok: true as const,
-          queued: false as const,
+          queued: deferredIds.length > 0,
           count: localIds.length,
           failures: [],
         };
       }
-      if (successIds.length === 0) {
+      if (successIds.length + deferredIds.length === 0) {
         // None made it through — total failure. Surface the first
         // failure's message (they're often all the same — same
         // resourceId / week-locked issue).
