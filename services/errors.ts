@@ -51,6 +51,47 @@ export function formatError(e: unknown): AppError {
   return { code: 'unknown', userMessage: 'Something went wrong. Please try again.' };
 }
 
+/**
+ * Single source of truth for "did the server definitely refuse this write,
+ * or is the outcome unknown?" Every create/update path (submitEntry, the
+ * scan fallback loop, processQueue) branches on this and nothing else.
+ *
+ *   'rejected'  — the server answered with a 4xx other than 401, 403, 408
+ *                 or 429. It read the request and declined it: nothing was
+ *                 created or updated, and re-sending the same payload fails
+ *                 the same way. Surface the reason (extractBqeErrorMessage)
+ *                 and stop.
+ *
+ *   'uncertain' — everything else: no response at all (timeout
+ *                 ECONNABORTED/ETIMEDOUT, network error, abort), any 5xx,
+ *                 408, 429, and also 401/403. For 5xx and no-response the
+ *                 write MAY have been applied: a client timeout can fire
+ *                 after the server has committed; a 5xx can be a
+ *                 proxy/gateway failure or a post-commit error; 408 and 429
+ *                 describe the request lifecycle, not the payload. 401/403
+ *                 are different — nothing was written — but the row must
+ *                 survive a re-login and sync afterwards rather than be
+ *                 marked failed; the reconcile fetch this triggers is a
+ *                 harmless read. Treat the outcome as unknown and reconcile
+ *                 against the server before retrying.
+ */
+export function classifyWriteFailure(e: unknown): 'rejected' | 'uncertain' {
+  const ax = e as AxiosError | undefined;
+  if (!ax || !ax.isAxiosError || !ax.response) return 'uncertain';
+  const status = ax.response.status;
+  if (
+    status >= 400 &&
+    status < 500 &&
+    status !== 401 &&
+    status !== 403 &&
+    status !== 408 &&
+    status !== 429
+  ) {
+    return 'rejected';
+  }
+  return 'uncertain';
+}
+
 export function logError(scope: string, e: unknown): void {
   console.error(`[jot:${scope}]`, e);
 }
