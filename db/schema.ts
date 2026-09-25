@@ -6,6 +6,10 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE LocalTimeEntry ADD COLUMN submissionStatus TEXT`,
   `ALTER TABLE LocalTimeEntry ADD COLUMN retryCount INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE LocalTimeEntry ADD COLUMN lastError TEXT`,
+  // H-2: a create request for this row was sent and its outcome is unknown
+  // (timeout, 5xx, killed process). The next create attempt must reconcile
+  // against the server before POSTing again. See services/sync/queue.ts.
+  `ALTER TABLE LocalTimeEntry ADD COLUMN createUncertain INTEGER NOT NULL DEFAULT 0`,
   // Studio G filters phases by BQE contract-type enum (see project.ts).
   // Existing installs need this column added before saveProjects can write it.
   // SQLite type affinity is loose, so even if an early build added this as
@@ -147,7 +151,8 @@ CREATE TABLE IF NOT EXISTS LocalTimeEntry (
   version TEXT,
   submissionStatus TEXT,
   retryCount INTEGER NOT NULL DEFAULT 0,
-  lastError TEXT
+  lastError TEXT,
+  createUncertain INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_entry_resource_date ON LocalTimeEntry(resourceId, date);
 CREATE INDEX IF NOT EXISTS idx_entry_sync ON LocalTimeEntry(syncStatus);
@@ -280,7 +285,10 @@ export interface LocalEmployeeRow {
 
 export type LocalEmployee = LocalEmployeeRow;
 
-export type SyncStatus = 'pending' | 'synced' | 'failed' | 'conflict';
+// Row sync state. Transitions are documented at the top of
+// services/sync/queue.ts. 'in_flight' = a create POST for this row has been
+// claimed and sent by exactly one caller and has not yet resolved.
+export type SyncStatus = 'pending' | 'in_flight' | 'synced' | 'failed';
 export type EntrySource = 'manual' | 'scanned' | 'voice' | 'prefilled';
 
 export interface LocalTimeEntryRow {
@@ -301,6 +309,8 @@ export interface LocalTimeEntryRow {
   submissionStatus: string | null;
   retryCount: number;
   lastError: string | null;
+  // 0 | 1 in SQLite. See the MIGRATIONS comment for createUncertain.
+  createUncertain: number;
 }
 
 export interface LocalTimeEntry {
@@ -321,6 +331,9 @@ export interface LocalTimeEntry {
   submissionStatus: string | null;
   retryCount: number;
   lastError: string | null;
+  // True when a create was sent for this row and its outcome is unknown;
+  // the queue reconciles against the server before it POSTs again.
+  createUncertain: boolean;
 }
 
 export function projectFromRow(row: LocalProjectRow): LocalProject {
@@ -421,6 +434,7 @@ export function entryFromRow(row: LocalTimeEntryRow): LocalTimeEntry {
   return {
     ...row,
     isBillable: !!row.isBillable,
+    createUncertain: !!row.createUncertain,
   };
 }
 

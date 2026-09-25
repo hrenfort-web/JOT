@@ -14,6 +14,7 @@ import {
   entryFromRow,
 } from '../../db/schema';
 import { parseSourceTag } from '../../utils/sourceTag';
+import { isAdoptableMatch } from '../sync/adoption';
 
 export interface BqeTimeEntry {
   id: string;
@@ -72,6 +73,13 @@ function toApiPayload(p: CreateTimeEntryPayload) {
   };
 }
 
+// The one where-clause for "this resource's entries between two calendar
+// days, inclusive". Both bounds are ISO YYYY-MM-DD; BQE compares its
+// T00:00:00 dates against them correctly.
+function entriesInRangeWhere(resourceId: string, startIso: string, endIso: string): string {
+  return `resourceId='${resourceId}' AND date>='${startIso}' AND date<='${endIso}'`;
+}
+
 export async function fetchWeekEntries(
   resourceId: string,
   weekStart: Date | string,
@@ -80,7 +88,7 @@ export async function fetchWeekEntries(
   const start = toIsoDay(weekStart);
   const end = toIsoDay(weekEnd);
   const entries = await fetchAllPages<BqeTimeEntry>('/timeentry', {
-    where: `resourceId='${resourceId}' AND date>='${start}' AND date<='${end}'`,
+    where: entriesInRangeWhere(resourceId, start, end),
   });
   await persistFetchedEntries(entries, {
     resourceId,
@@ -134,9 +142,19 @@ async function persistFetchedEntries(
   // Pass 1 — find rows the user has edited but the queue hasn't re-POSTed.
   // We must NOT overwrite their local edits with the stale server copy.
   const pendingBqeIds = await loadPendingBqeIdsInRange(scope);
+  const entriesNotPending = entries.filter((e) => !pendingBqeIds.has(e.id));
 
-  // Pass 2 — upsert the non-pending entries.
-  const entriesToUpsert = entries.filter((e) => !pendingBqeIds.has(e.id));
+  // Pass 1b — adopt uncertain local creates (H-2). A fetched entry that no
+  // local row carries as bqeId may be the server copy of a local row whose
+  // create was sent but never confirmed (createUncertain=1). Adopting it
+  // in place (the local row takes the server id) instead of inserting a
+  // second row is what makes a retried create safe. This runs on EVERY
+  // week fetch — home screen, day rollover, or the queue's pre-POST
+  // reconcile — so the fetch/drain ordering cannot produce a duplicate.
+  const adoptedBqeIds = await adoptUncertainRows(entriesNotPending, scope);
+
+  // Pass 2 — upsert the non-pending, non-adopted entries.
+  const entriesToUpsert = entriesNotPending.filter((e) => !adoptedBqeIds.has(e.id));
   if (entriesToUpsert.length > 0) {
     const rows = entriesToUpsert.map<SqlParam[]>((e) => [
       e.id,
@@ -171,10 +189,77 @@ async function persistFetchedEntries(
   console.log(
     `[jot:sync-reconcile] fetched=${entries.length} ` +
       `upserted=${entriesToUpsert.length} ` +
+      `adopted=${adoptedBqeIds.size} ` +
       `pending-skipped=${pendingBqeIds.size} ` +
       `orphans-deleted=${deletedCount} ` +
       `scope=${scope.weekStart}..${scope.weekEnd}`,
   );
+}
+
+/**
+ * Pass 1b helper (H-2 adoption). For each fetched entry whose id is not
+ * already any local row's bqeId, look for an uncertain local create in
+ * scope (bqeId IS NULL, createUncertain=1, syncStatus pending or in_flight)
+ * that isAdoptableMatch (services/sync/adoption.ts — the only matcher)
+ * says is the same entry. Adopt with one guarded UPDATE (WHERE id=? AND
+ * bqeId IS NULL): the local row takes the server id, becomes synced, and
+ * its uncertainty is cleared. Each local row is consumed at most once per
+ * fetch. Returns the set of fetched ids that were adopted so pass 2 skips
+ * inserting them.
+ */
+async function adoptUncertainRows(
+  entries: BqeTimeEntry[],
+  scope: ReconcileScope,
+): Promise<Set<string>> {
+  const adopted = new Set<string>();
+  if (entries.length === 0) return adopted;
+
+  const known = await getAll<{ bqeId: string }>(
+    'SELECT bqeId FROM LocalTimeEntry WHERE bqeId IS NOT NULL',
+  );
+  const knownIds = new Set(known.map((r) => r.bqeId));
+  const unknownRemote = entries.filter((e) => e.id && !knownIds.has(e.id));
+  if (unknownRemote.length === 0) return adopted;
+
+  const uncertain = await getAll<LocalTimeEntryRow>(
+    `SELECT * FROM LocalTimeEntry
+     WHERE resourceId = ?
+       AND date BETWEEN ? AND ?
+       AND bqeId IS NULL
+       AND createUncertain = 1
+       AND syncStatus IN ('pending', 'in_flight')
+     ORDER BY id ASC`,
+    [scope.resourceId, scope.weekStart, scope.weekEnd],
+  );
+  if (uncertain.length === 0) return adopted;
+
+  const consumed = new Set<number>();
+  for (const remote of unknownRemote) {
+    const row = uncertain.find((r) => !consumed.has(r.id) && isAdoptableMatch(r, remote));
+    if (!row) continue;
+    const result = await run(
+      `UPDATE LocalTimeEntry
+       SET bqeId = ?,
+           syncStatus = 'synced',
+           version = ?,
+           billStatus = ?,
+           createUncertain = 0,
+           lastError = NULL
+       WHERE id = ? AND bqeId IS NULL`,
+      [
+        remote.id,
+        remote.version != null ? String(remote.version) : null,
+        remote.billStatus ?? null,
+        row.id,
+      ],
+    );
+    if ((result.changes ?? 0) === 1) {
+      consumed.add(row.id);
+      adopted.add(remote.id);
+      console.log(`[jot:sync] adopt-on-fetch localId=${row.id} bqeId=${remote.id}`);
+    }
+  }
+  return adopted;
 }
 
 /**
@@ -716,29 +801,91 @@ export async function markEntrySyncedWithBqeId(
   version?: string | null,
   billStatus?: string | null,
 ): Promise<void> {
-  await run(
-    `UPDATE LocalTimeEntry
-     SET syncStatus = 'synced',
-         bqeId = ?,
-         version = ?,
-         billStatus = ?,
-         retryCount = 0,
-         lastError = NULL
-     WHERE id = ?`,
-    [bqeId, version ?? null, billStatus ?? null, localId],
-  );
+  // A week fetch can land between the server's 201 and this write: it sees
+  // the new server entry, finds no local row carrying that bqeId (this row
+  // is still in_flight with bqeId NULL and createUncertain 0, so adoption
+  // does not apply to it), and inserts a synced copy. Absorb that copy here
+  // so the row that owns the create keeps its identity and UNIQUE(bqeId)
+  // is not violated. One transaction (db/database.ts `transaction`, which
+  // also serialises against other transactions on the shared connection)
+  // so no reader ever sees zero or two rows for this entry.
+  await transaction(async (db) => {
+    const del = await db.runAsync(
+      `DELETE FROM LocalTimeEntry WHERE bqeId = ? AND id <> ? AND syncStatus = 'synced'`,
+      [bqeId, localId],
+    );
+    if ((del.changes ?? 0) > 0) {
+      console.log(`[jot:sync] absorbed-fetched-copy localId=${localId} bqeId=${bqeId}`);
+    }
+    await db.runAsync(
+      `UPDATE LocalTimeEntry
+       SET syncStatus = 'synced',
+           bqeId = ?,
+           version = ?,
+           billStatus = ?,
+           retryCount = 0,
+           lastError = NULL,
+           createUncertain = 0
+       WHERE id = ?`,
+      [bqeId, version ?? null, billStatus ?? null, localId],
+    );
+  }, 'markEntrySyncedWithBqeId');
 }
 
-export async function markEntryRetryError(
+/**
+ * Atomic ownership claim for a create. Flips exactly one row from
+ * 'pending' (never synced: bqeId IS NULL) to 'in_flight'. Returns true iff
+ * this call changed the row — whoever gets true is the only caller allowed
+ * to send the POST. submitEntry, the scan fallback loop and processQueue
+ * all go through this, so a row can never be POSTed twice by the app.
+ */
+export async function claimEntryForCreate(localId: number): Promise<boolean> {
+  const result = await run(
+    `UPDATE LocalTimeEntry
+     SET syncStatus = 'in_flight'
+     WHERE id = ? AND syncStatus = 'pending' AND bqeId IS NULL`,
+    [localId],
+  );
+  return (result.changes ?? 0) === 1;
+}
+
+/**
+ * A create for this row was sent and its outcome is unknown (timeout, 5xx,
+ * 408, 429, no response). Back to 'pending' so the queue picks it up, with
+ * createUncertain=1 so the queue reconciles against the server before it
+ * POSTs again. retryCount is left alone — the caller decides whether this
+ * attempt counts.
+ */
+export async function markEntryCreateUncertain(
   localId: number,
-  retryCount: number,
   errorMessage: string,
 ): Promise<void> {
   await run(
     `UPDATE LocalTimeEntry
-     SET syncStatus = 'pending', retryCount = ?, lastError = ?
+     SET syncStatus = 'pending', createUncertain = 1, lastError = ?
      WHERE id = ?`,
-    [retryCount, errorMessage.slice(0, 500), localId],
+    [errorMessage.slice(0, 500), localId],
+  );
+}
+
+/**
+ * Record a transient failure and put the row back in the queue. When
+ * `createUncertain` is true the attempt was a create whose outcome is
+ * unknown (5xx/408/429), so the flag is raised as well; otherwise the
+ * existing flag value is preserved.
+ */
+export async function markEntryRetryError(
+  localId: number,
+  retryCount: number,
+  errorMessage: string,
+  createUncertain: boolean = false,
+): Promise<void> {
+  await run(
+    `UPDATE LocalTimeEntry
+     SET syncStatus = 'pending', retryCount = ?, lastError = ?,
+         createUncertain = CASE WHEN ? = 1 THEN 1 ELSE createUncertain END
+     WHERE id = ?`,
+    [retryCount, errorMessage.slice(0, 500), createUncertain ? 1 : 0, localId],
   );
 }
 

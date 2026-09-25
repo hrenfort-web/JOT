@@ -17,6 +17,27 @@ export function getDb(): Promise<SQLite.SQLiteDatabase> {
           // duplicate column or already-applied migration; ignore
         }
       }
+
+      // Launch release of orphaned creates (H-2). A LocalTimeEntry row is
+      // 'in_flight' only while one caller holds the claim for its POST, and
+      // that claim lives in process memory. At process start no request can
+      // be in flight, so any in_flight row here was left behind by a killed
+      // process and its create outcome is unknown. Flip it to pending with
+      // createUncertain=1 so the sync queue reconciles it against the server
+      // before it will POST again. It lives HERE, not in a React effect,
+      // because every consumer (the sync queue, the home screen's first
+      // week fetch, anything) reaches the table through getDb() and awaits
+      // this same promise — so the release is guaranteed to have run before
+      // the first query, which is the ordering the fetch-side adoption in
+      // services/bqe/timeentry.ts persistFetchedEntries depends on (it only
+      // adopts rows that are already flagged uncertain).
+      const released = await db.runAsync(
+        `UPDATE LocalTimeEntry
+         SET syncStatus = 'pending', createUncertain = 1
+         WHERE syncStatus = 'in_flight'`,
+      );
+      console.log(`[jot:sync] launch release count=${released.changes ?? 0}`);
+
       return db;
     })();
   }
