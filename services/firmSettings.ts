@@ -20,6 +20,7 @@ import {
   STUDIO_G_ACTIVITY_PINNING,
   STUDIO_G_MEMO_TEMPLATES_SEED,
   STUDIO_G_SCAN_LOOKUP_OPTIONS,
+  STUDIO_G_VISIBLE_WEEK_DAYS,
 } from './firmSettings/seed/studioG';
 
 export const FIRM_SETTING_KEYS = {
@@ -29,10 +30,40 @@ export const FIRM_SETTING_KEYS = {
   ACTIVITY_PINNING: 'activityPinning',
   MEMO_TEMPLATES: 'memoTemplates',
   SCAN_LOOKUP_OPTIONS: 'scanLookupOptions',
+  VISIBLE_WEEK_DAYS: 'visibleWeekDays',
   FIRM_SETTINGS_VERSION: 'firmSettingsVersion',
 } as const;
 
 export type ActivitySelectionMode = 'auto' | 'manual';
+
+/**
+ * `visibleWeekDays` — how many days, counting from Monday, the day pills
+ * show (home WeekBar, entry-flow day selector, scan-review "of N days"
+ * label). Integer 5..7; 5 = Monday–Friday, 7 = Monday–Sunday. Stored as a
+ * string like every other LocalFirmSettings value.
+ *
+ * Display-only. Week fetch ranges (loadWeek), Logged/Remaining totals,
+ * Submit Week, and reminders always cover Monday through Sunday regardless
+ * of this value — an entry on a hidden weekend day is still fetched,
+ * counted, and submitted; it just has no pill.
+ *
+ * Absent, empty, non-integer, or out-of-range values resolve to
+ * DEFAULT_VISIBLE_WEEK_DAYS (clamped into range when the number is
+ * parseable). `parseVisibleWeekDays` is the single parser; UI reads it
+ * through hooks/useVisibleWeek.ts.
+ */
+export const VISIBLE_WEEK_DAYS_MIN = 5;
+export const VISIBLE_WEEK_DAYS_MAX = 7;
+export const DEFAULT_VISIBLE_WEEK_DAYS = 7;
+
+export function parseVisibleWeekDays(raw: string | null | undefined): number {
+  if (raw === null || raw === undefined || raw.trim() === '') {
+    return DEFAULT_VISIBLE_WEEK_DAYS;
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n)) return DEFAULT_VISIBLE_WEEK_DAYS;
+  return Math.min(VISIBLE_WEEK_DAYS_MAX, Math.max(VISIBLE_WEEK_DAYS_MIN, n));
+}
 
 /**
  * Bumping this constant causes the next-launch seed pass to overwrite the
@@ -46,8 +77,9 @@ export type ActivitySelectionMode = 'auto' | 'manual';
  * v3 expands memoTemplates with alias phrases (STUDIO_G_MEMO_TEMPLATES_SEED).
  * v4 adds scanLookupOptions (firm-configurable cap on the scan project pool;
  *    Studio G uses 250, effectively no cap at current firm size).
+ * v5 adds visibleWeekDays (day pills shown from Monday; Studio G shows 7).
  */
-export const STUDIO_G_FIRM_SETTINGS_VERSION = 4;
+export const STUDIO_G_FIRM_SETTINGS_VERSION = 5;
 
 export async function loadFirmSettings(): Promise<Record<string, string>> {
   const rows = await getAll<LocalFirmSettingRow>(
@@ -92,8 +124,9 @@ export async function writeFirmSetting(
  * Idempotent versioned seed.
  *
  * Reads `firmSettingsVersion` from LocalFirmSettings, compares to
- * STUDIO_G_FIRM_SETTINGS_VERSION, and writes the current seed payload
- * (currently `activityPinning`) when stale. Leaves other keys alone —
+ * STUDIO_G_FIRM_SETTINGS_VERSION, and when stale writes the current seed
+ * payload: `activityPinning`, `memoTemplates`, `scanLookupOptions`,
+ * `visibleWeekDays`, then `firmSettingsVersion`. Leaves other keys alone —
  * specifically does NOT touch `activitySelectionMode`, which is seeded
  * by the SCHEMA-level INSERT OR IGNORE so user overrides survive.
  *
@@ -127,6 +160,10 @@ export async function seedFirmSettingsIfStale(): Promise<void> {
   await writeFirmSetting(
     FIRM_SETTING_KEYS.SCAN_LOOKUP_OPTIONS,
     JSON.stringify(STUDIO_G_SCAN_LOOKUP_OPTIONS),
+  );
+  await writeFirmSetting(
+    FIRM_SETTING_KEYS.VISIBLE_WEEK_DAYS,
+    String(STUDIO_G_VISIBLE_WEEK_DAYS),
   );
   await writeFirmSetting(
     FIRM_SETTING_KEYS.FIRM_SETTINGS_VERSION,

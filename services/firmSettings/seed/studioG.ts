@@ -151,3 +151,15 @@ export const STUDIO_G_SCAN_LOOKUP_OPTIONS = {
 };
 
 export type ScanLookupOptions = typeof STUDIO_G_SCAN_LOOKUP_OPTIONS;
+
+/**
+ * Visible week length for the day pills (home WeekBar, entry-flow day
+ * selector, scan-review "of N days" label). Days counted from Monday,
+ * 5..7. Studio G shows the full Monday–Sunday week so weekend time is
+ * visible and selectable. Display-only: fetch ranges and totals always
+ * span Monday–Sunday (see `visibleWeekDays` in services/firmSettings.ts).
+ *
+ * To change: edit the value, bump STUDIO_G_FIRM_SETTINGS_VERSION in
+ * services/firmSettings.ts, commit, build.
+ */
+export const STUDIO_G_VISIBLE_WEEK_DAYS = 7;

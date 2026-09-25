@@ -11,12 +11,11 @@ import { useProjectStore } from '../../store/useProjectStore';
 import { useEntryStore } from '../../store/useEntryStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { phaseMeta } from '../../utils/phaseMeta';
-import { fromIsoDay, getMonday, getWeekDays } from '../../utils/dateHelpers';
+import { fromIsoDay, getMonday } from '../../utils/dateHelpers';
 import { useToday } from '../../hooks/useToday';
+import { useVisibleWeekDays } from '../../hooks/useVisibleWeek';
 import { loadLastUsedDateByPhase } from '../../services/bqe/timeentry';
 import type { LocalProject } from '../../db/schema';
-
-const WEEKDAYS = 5;
 
 // View-mode thresholds. Tweak both numbers together: GRID_MAX is inclusive
 // (≤ 6 phases stays in the grid), LIST_SEARCH_MIN is the inclusive lower
@@ -119,7 +118,7 @@ export default function PhaseSelectionScreen() {
     return new Date();
   }, [selectedDate]);
   const monday = useMemo(() => getMonday(parsedSelectedDate), [parsedSelectedDate]);
-  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
+  const visibleDays = useVisibleWeekDays(monday);
 
   const project = useMemo(
     () => flatProjects.find((p) => p.id === projectId && !p.isPhase) ?? null,

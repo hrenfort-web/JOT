@@ -31,8 +31,9 @@ import {
   formatEntryHours,
   setHoursValue,
 } from '../../utils/hourMath';
-import { fromIsoDay, getMonday, getSunday, getWeekDays, toIsoDay } from '../../utils/dateHelpers';
+import { fromIsoDay, getMonday, getSunday, toIsoDay } from '../../utils/dateHelpers';
 import { useToday } from '../../hooks/useToday';
+import { useVisibleWeekDays } from '../../hooks/useVisibleWeek';
 import {
   REPEAT_THRESHOLD,
   REPEAT_TIMEOUT_MS,
@@ -61,7 +62,6 @@ import { formatError, logError } from '../../services/errors';
 import { resolveActivityForEntry } from '../../services/activitySelection/resolver';
 import type { LocalTimeEntry } from '../../db/schema';
 
-const WEEKDAYS = 5;
 const BASE_HOURS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 // Stable module-scope reference for the header-right slot — prevents
@@ -144,7 +144,7 @@ export default function HoursEntryScreen() {
   }, [selectedDate]);
   const monday = useMemo(() => getMonday(parsedSelectedDate), [parsedSelectedDate]);
   const sunday = useMemo(() => getSunday(parsedSelectedDate), [parsedSelectedDate]);
-  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
+  const visibleDays = useVisibleWeekDays(monday);
   const submitEntry = useEntryStore((s) => s.submitEntry);
   const saveEntryEdits = useEntryStore((s) => s.saveEntryEdits);
   const showToast = useToastStore((s) => s.show);
@@ -620,7 +620,7 @@ export default function HoursEntryScreen() {
         />
         {/*
           Unambiguous full-date callout under the WeekBar. The compact
-          day letters (M, T, W, Th, F) read identically across weeks; this
+          day letters (M through Su) read identically across weeks; this
           label tells the user e.g. "Thursday, May 22" so a past-week
           selection can't be mistaken for the current week. Reads from
           parsedSelectedDate so it always agrees with the WeekBar

@@ -30,6 +30,7 @@ import {
   toIsoDay,
 } from '../utils/dateHelpers';
 import { phaseMeta } from '../utils/phaseMeta';
+import { useVisibleWeekDayCount } from '../hooks/useVisibleWeek';
 import type { ParsedEntry, ParsedFlag, ParsedTimesheet } from '../services/ai/scanner';
 import {
   validateEntryDate,
@@ -104,6 +105,9 @@ export default function ReviewScreen() {
   const monday = useMemo(() => getMonday(today), [today]);
   const sunday = useMemo(() => getSunday(today), [today]);
   const weekDays = useMemo(() => getWeekDays(monday, 7), [monday]);
+  // Denominator for the "Week total (N of M days)" label only — the day
+  // grouping below is unchanged (weekdays always, weekend when populated).
+  const visibleWeekDayCount = useVisibleWeekDayCount();
 
   const projectsById = useMemo(
     () => new Map(flatProjects.map((p) => [p.id, p])),
@@ -689,7 +693,7 @@ export default function ReviewScreen() {
         <View style={styles.totalBar}>
           <View>
             <Text style={styles.totalLabel}>
-              Week total ({daysWithEntries} of 5 days)
+              Week total ({daysWithEntries} of {visibleWeekDayCount} days)
             </Text>
             {totalWarn ? (
               <Text style={styles.totalWarn}>

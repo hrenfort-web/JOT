@@ -19,11 +19,11 @@ import {
   formatHours,
   getMonday,
   getSunday,
-  getWeekDays,
   isSameDay,
   toIsoDay,
 } from '../../utils/dateHelpers';
 import { useToday } from '../../hooks/useToday';
+import { useVisibleWeekDays } from '../../hooks/useVisibleWeek';
 import { WeekBar } from '../../components/WeekBar';
 import { SummaryPill } from '../../components/SummaryPill';
 import { ProjectCard } from '../../components/ProjectCard';
@@ -54,7 +54,6 @@ import { useOnline } from '../../services/sync/connectivity';
 import type { LocalProject, LocalTimeEntry } from '../../db/schema';
 import type { ProjectNode } from '../../services/bqe/project';
 
-const WEEKDAYS = 5;
 const MAX_WEEK_OFFSET = 4;
 
 export default function HomeScreen() {
@@ -69,8 +68,10 @@ export default function HomeScreen() {
   const referenceDate = useMemo(() => addWeeks(today, weekOffset), [today, weekOffset]);
   const monday = useMemo(() => getMonday(referenceDate), [referenceDate]);
   const sunday = useMemo(() => getSunday(referenceDate), [referenceDate]);
-  const visibleDays = useMemo(() => getWeekDays(monday, WEEKDAYS), [monday]);
-  const friday = useMemo(() => visibleDays[visibleDays.length - 1], [visibleDays]);
+  // Pill count comes from the visibleWeekDays firm setting (5..7 from
+  // Monday). The fetch/total range below stays monday..sunday regardless.
+  const visibleDays = useVisibleWeekDays(monday);
+  const lastVisibleDay = useMemo(() => visibleDays[visibleDays.length - 1], [visibleDays]);
   const isCurrentWeek = weekOffset === 0;
 
   const user = useAuthStore((s) => s.user);
@@ -298,7 +299,7 @@ export default function HomeScreen() {
 
   const handleSubmitWeek = () => {
     if (!user?.id || draftEntries.length === 0) return;
-    const weekLabel = weekRangeLabel(monday, friday);
+    const weekLabel = weekRangeLabel(monday, lastVisibleDay);
     Alert.alert(
       `Submit ${draftEntries.length} ${draftEntries.length === 1 ? 'entry' : 'entries'} (${formatHours(draftHours)}h)?`,
       `For the week of ${weekLabel}. You won't be able to edit them after.`,
@@ -550,7 +551,7 @@ export default function HomeScreen() {
               <Ionicons name="chevron-back" size={18} color={colors.text} />
             </Pressable>
             <Text style={styles.weekRange} numberOfLines={1} ellipsizeMode="tail">
-              {weekRelativeTag(weekOffset)} · {weekRangeLabel(monday, friday)}
+              {weekRelativeTag(weekOffset)} · {weekRangeLabel(monday, lastVisibleDay)}
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -676,10 +677,10 @@ function buildPhaseLabelByParent(
   return labels;
 }
 
-function weekRangeLabel(monday: Date, friday: Date): string {
+function weekRangeLabel(monday: Date, lastVisibleDay: Date): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${fmt(monday)} — ${fmt(friday)}`;
+  return `${fmt(monday)} — ${fmt(lastVisibleDay)}`;
 }
 
 // Relative-week tag for the home header. Pairs with weekRangeLabel as
