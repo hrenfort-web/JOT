@@ -6,23 +6,32 @@ import { formatHours } from '../utils/dateHelpers';
 interface SubmitWeekCardProps {
   draftHours: number;
   draftCount: number;
+  /** Rows still on their way to the server: syncStatus pending or in_flight. */
   pendingCount: number;
+  /** Rows the server rejected or that exhausted retries: syncStatus failed. */
+  failedCount: number;
   submitting: boolean;
   onSubmit: () => void;
 }
 
+// Honest state labelling: a failed row is never described as "syncing".
+// Failures block submission and are called out with their own line so the
+// user knows to tap the red entry and fix it; only genuinely in-progress
+// rows get the "still syncing" wording.
 export function SubmitWeekCard({
   draftHours,
   draftCount,
   pendingCount,
+  failedCount,
   submitting,
   onSubmit,
 }: SubmitWeekCardProps) {
   const hasDrafts = draftCount > 0;
   const hasPending = pendingCount > 0;
-  const disabled = submitting || !hasDrafts || hasPending;
+  const hasFailed = failedCount > 0;
+  const disabled = submitting || !hasDrafts || hasPending || hasFailed;
 
-  if (!hasDrafts && !hasPending) {
+  if (!hasDrafts && !hasPending && !hasFailed) {
     return (
       <View style={[styles.card, styles.cardDone]}>
         <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
@@ -34,6 +43,11 @@ export function SubmitWeekCard({
     );
   }
 
+  const failedLine = hasFailed
+    ? `${failedCount} failed — tap a red entry to fix`
+    : null;
+  const pendingLine = hasPending ? `${pendingCount} still syncing` : null;
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -42,8 +56,9 @@ export function SubmitWeekCard({
       </View>
       <Text style={styles.subHeading}>
         {draftCount} {draftCount === 1 ? 'entry' : 'entries'} saved as draft
-        {hasPending ? ` · ${pendingCount} still syncing` : ''}
+        {pendingLine ? ` · ${pendingLine}` : ''}
       </Text>
+      {failedLine ? <Text style={styles.failedLine}>{failedLine}</Text> : null}
 
       <Pressable
         onPress={onSubmit}
@@ -65,9 +80,11 @@ export function SubmitWeekCard({
       </Pressable>
 
       <Text style={styles.hint}>
-        {hasPending
-          ? 'Wait for syncing entries to finish, then submit.'
-          : 'Once submitted, entries are locked for PM review.'}
+        {hasFailed
+          ? 'Fix or delete the failed entries, then submit.'
+          : hasPending
+            ? 'Wait for syncing entries to finish, then submit.'
+            : 'Once submitted, entries are locked for PM review.'}
       </Text>
     </View>
   );
@@ -106,6 +123,11 @@ const styles = StyleSheet.create({
   subHeading: {
     fontSize: 12,
     color: colors.muted,
+  },
+  failedLine: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.danger,
   },
   button: {
     backgroundColor: colors.accent,

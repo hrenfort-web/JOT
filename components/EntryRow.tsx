@@ -6,6 +6,7 @@ import { colors } from '../theme';
 import { formatHours } from '../utils/dateHelpers';
 import { SubmissionBadge } from './SubmissionBadge';
 import { PhasePill } from './PhasePill';
+import type { SyncStatus } from '../db/schema';
 
 interface EntryRowProps {
   projectName: string;
@@ -14,14 +15,17 @@ interface EntryRowProps {
   memo: string | null;
   color: string;
   locked?: boolean;
-  pending?: boolean;
-  failed?: boolean;
+  /** The row's sync state, rendered honestly: see stateHint below. */
+  syncStatus: SyncStatus;
+  /** Last sync error, shown on a pending row that is awaiting a retry. */
+  lastError?: string | null;
   submissionStatus?: string | null;
   onPress?: () => void;
   onDelete?: () => void;
 }
 
 const MEMO_PREVIEW_MAX = 48;
+const LAST_ERROR_PREVIEW_MAX = 60;
 
 interface EntryA11yInput {
   projectName: string;
@@ -29,8 +33,33 @@ interface EntryA11yInput {
   hours: number;
   memo: string | null;
   locked?: boolean;
-  failed?: boolean;
-  pending?: boolean;
+  syncStatus: SyncStatus;
+  lastError?: string | null;
+}
+
+// The one place the sync state becomes user-facing text. Returned as the
+// visible hint under the memo; the a11y chunk below mirrors it.
+//   in_flight            → "Saving…"           (a POST is on the wire)
+//   pending, no error    → "Waiting to sync"   (queued, nothing tried yet)
+//   pending, lastError   → "Will retry — <why>" (a previous attempt didn't
+//                          resolve; the queue will reconcile and retry)
+//   failed               → "Failed to sync — tap to retry" (server said no,
+//                          or retries ran out; lastError has the reason)
+//   synced               → no hint
+function stateHint(syncStatus: SyncStatus, lastError: string | null | undefined): string | null {
+  switch (syncStatus) {
+    case 'failed':
+      return 'Failed to sync — tap to retry';
+    case 'in_flight':
+      return 'Saving…';
+    case 'pending':
+      return lastError && lastError.trim().length > 0
+        ? `Will retry — ${lastError.trim().slice(0, LAST_ERROR_PREVIEW_MAX)}`
+        : 'Waiting to sync';
+    case 'synced':
+    default:
+      return null;
+  }
 }
 
 // Compose a single screen-reader sentence summarising an entry. Mirrors the
@@ -41,11 +70,15 @@ function buildEntryA11yLabel(e: EntryA11yInput): string {
   const memoChunk = e.memo && e.memo.trim().length > 0 ? `, ${e.memo}` : '';
   const stateChunk = e.locked
     ? ', locked'
-    : e.failed
+    : e.syncStatus === 'failed'
       ? ', failed to sync'
-      : e.pending
-        ? ', waiting to sync'
-        : '';
+      : e.syncStatus === 'in_flight'
+        ? ', saving'
+        : e.syncStatus === 'pending'
+          ? e.lastError
+            ? ', will retry'
+            : ', waiting to sync'
+          : '';
   return `${e.projectName}${phaseChunk}, ${formatHours(e.hours)} hours${memoChunk}${stateChunk}`;
 }
 
@@ -56,13 +89,16 @@ export function EntryRow({
   memo,
   color,
   locked,
-  pending,
-  failed,
+  syncStatus,
+  lastError,
   submissionStatus,
   onPress,
   onDelete,
 }: EntryRowProps) {
   const swipeRef = useRef<Swipeable>(null);
+  const failed = syncStatus === 'failed';
+  const inProgress = syncStatus === 'pending' || syncStatus === 'in_flight';
+  const hint = stateHint(syncStatus, lastError);
 
   const memoPreview = memo
     ? memo.length > MEMO_PREVIEW_MAX
@@ -125,8 +161,8 @@ export function EntryRow({
           hours,
           memo,
           locked,
-          failed,
-          pending,
+          syncStatus,
+          lastError,
         })}
         accessibilityHint={
           locked
@@ -158,10 +194,8 @@ export function EntryRow({
           ) : (
             <Text style={[styles.memo, styles.memoEmpty]}>No memo</Text>
           )}
-          {failed ? (
-            <Text style={styles.failedHint}>Failed to sync — tap to retry</Text>
-          ) : pending ? (
-            <Text style={styles.pendingHint}>Waiting to sync</Text>
+          {hint ? (
+            <Text style={failed ? styles.failedHint : styles.pendingHint}>{hint}</Text>
           ) : null}
         </View>
         <View style={styles.right}>
@@ -170,7 +204,7 @@ export function EntryRow({
             <Ionicons name="lock-closed" size={16} color={colors.textTertiary} />
           ) : failed ? (
             <Ionicons name="alert-circle" size={18} color={colors.danger} />
-          ) : pending ? (
+          ) : inProgress ? (
             <Ionicons name="cloud-upload-outline" size={16} color="#B45309" />
           ) : (
             <Ionicons name="pencil-outline" size={16} color={colors.textTertiary} />

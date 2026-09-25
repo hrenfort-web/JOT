@@ -292,8 +292,17 @@ export default function HomeScreen() {
     () => draftEntries.reduce((s, e) => s + e.hours, 0),
     [draftEntries],
   );
+  // "Still syncing" means exactly pending or in_flight. Failed rows are
+  // counted separately so the Submit card never calls a failure "syncing".
   const pendingWeekCount = useMemo(
-    () => weekEntries.filter((e) => e.syncStatus !== 'synced').length,
+    () =>
+      weekEntries.filter(
+        (e) => e.syncStatus === 'pending' || e.syncStatus === 'in_flight',
+      ).length,
+    [weekEntries],
+  );
+  const failedWeekCount = useMemo(
+    () => weekEntries.filter((e) => e.syncStatus === 'failed').length,
     [weekEntries],
   );
 
@@ -499,8 +508,8 @@ export default function HomeScreen() {
                 memo={entry.memo}
                 color={parent?.color ?? colors.accent}
                 locked={!isEntryEditable(entry)}
-                pending={entry.syncStatus === 'pending'}
-                failed={entry.syncStatus === 'failed'}
+                syncStatus={entry.syncStatus}
+                lastError={entry.lastError}
                 submissionStatus={entry.submissionStatus}
                 onPress={() => handleEntryPress(entry)}
                 onDelete={() => handleEntryDelete(entry)}
@@ -603,6 +612,7 @@ export default function HomeScreen() {
               draftHours={draftHours}
               draftCount={draftEntries.length}
               pendingCount={pendingWeekCount}
+              failedCount={failedWeekCount}
               submitting={isSubmittingWeek}
               onSubmit={handleSubmitWeek}
             />

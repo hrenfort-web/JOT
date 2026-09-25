@@ -388,20 +388,31 @@ export default function ReviewScreen() {
       .map((e) => e.lastLocalId)
       .filter((v): v is number => v !== null);
 
-    const result = await submitParsedBatch(
-      entries.map((e, i) => ({
-        projectId: e.phaseProjectId!,
-        activityId: resolved[i].activityId,
-        resourceId: user.id,
-        date: e.day,
-        hours: e.hours,
-        memo: e.memo,
-        isBillable: true,
-        source: 'scanned',
-      })),
-      { priorLocalIds },
-    );
-    setSubmitting(false);
+    let result: Awaited<ReturnType<typeof submitParsedBatch>>;
+    try {
+      result = await submitParsedBatch(
+        entries.map((e, i) => ({
+          projectId: e.phaseProjectId!,
+          activityId: resolved[i].activityId,
+          resourceId: user.id,
+          date: e.day,
+          hours: e.hours,
+          memo: e.memo,
+          isBillable: true,
+          source: 'scanned',
+        })),
+        { priorLocalIds },
+      );
+    } catch (err) {
+      // Thrown, not returned: the store never reached a per-entry decision.
+      // Keep the review list as-is (no clearAll, no navigation) and make
+      // sure the button spinner clears.
+      logError('scan-review.submit', err);
+      showToast(`Couldn't save: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      return;
+    } finally {
+      setSubmitting(false);
+    }
 
     if (result.ok === true) {
       // Full success — either everything posted, or everything was queued

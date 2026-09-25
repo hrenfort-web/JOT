@@ -59,6 +59,7 @@ import {
   validateMemo,
 } from '../../utils/validation';
 import { formatError, logError } from '../../services/errors';
+import { isOnline } from '../../services/sync/connectivity';
 import { resolveActivityForEntry } from '../../services/activitySelection/resolver';
 import type { LocalTimeEntry } from '../../db/schema';
 
@@ -492,13 +493,24 @@ export default function HoursEntryScreen() {
 
     if (isEditing && loadedEntry) {
       setSubmitting(true);
-      const result = await saveEntryEdits(loadedEntry.id, {
-        hours,
-        memo: memoText,
-        date: selectedDate,
-        isBillable: loadedEntry.isBillable,
-      });
-      setSubmitting(false);
+      let result: Awaited<ReturnType<typeof saveEntryEdits>>;
+      try {
+        result = await saveEntryEdits(loadedEntry.id, {
+          hours,
+          memo: memoText,
+          date: selectedDate,
+          isBillable: loadedEntry.isBillable,
+        });
+      } catch (err) {
+        // A thrown error (as opposed to a returned ok:false) means the
+        // store never reached a decision. Stay on the screen with the
+        // fields intact; the spinner must not stick.
+        logError('hours.saveEdits', err);
+        showToast(`Couldn't save: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        return;
+      } finally {
+        setSubmitting(false);
+      }
       if (result.ok) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         showToast('Entry updated', 'success');
@@ -532,17 +544,28 @@ export default function HoursEntryScreen() {
     const activityId = resolved.activityId;
 
     setSubmitting(true);
-    const result = await submitEntry({
-      projectId: targetProject.id,
-      activityId,
-      resourceId: user.id,
-      date: selectedDate,
-      hours,
-      memo: memoText,
-      isBillable: true,
-      source: 'manual',
-    });
-    setSubmitting(false);
+    let result: Awaited<ReturnType<typeof submitEntry>>;
+    try {
+      result = await submitEntry({
+        projectId: targetProject.id,
+        activityId,
+        resourceId: user.id,
+        date: selectedDate,
+        hours,
+        memo: memoText,
+        isBillable: true,
+        source: 'manual',
+      });
+    } catch (err) {
+      // Thrown, not returned: the store didn't get as far as a decision
+      // (e.g. the local insert itself failed). Keep the draft, stay here,
+      // and make sure the button spinner clears.
+      logError('hours.submit', err);
+      showToast(`Couldn't save: ${err instanceof Error ? err.message : String(err)}`, 'error');
+      return;
+    } finally {
+      setSubmitting(false);
+    }
 
     // Clear the draft regardless of submit outcome. submitEntry inserts the
     // local SQLite row UNCONDITIONALLY before the BQE call (see
@@ -558,7 +581,15 @@ export default function HoursEntryScreen() {
     if (result.ok) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (result.queued) {
-        showToast('Saved locally — will sync when online', 'info');
+        // queued while online means the sync queue won the claim and is
+        // posting it now; queued while offline means it waits for a
+        // connection. Same connectivity source the store uses.
+        showToast(
+          isOnline()
+            ? 'Saved — syncing in the background'
+            : 'Saved locally — will sync when online',
+          'info',
+        );
       } else {
         showToast(`${formatEntryHours(hours)}h logged — ${memoPreview}`, 'success');
       }
