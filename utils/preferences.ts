@@ -22,7 +22,37 @@ export const PREF_KEYS = {
   scanTipCollapsed: 'jot_scan_tip_collapsed',
   reminderPrefs: 'jot_reminder_prefs',
   notifPermissionAsked: 'jot_notif_permission_asked',
+  scanConsentAcceptedAt: 'jot_scan_consent_accepted_at',
 } as const;
+
+/**
+ * scanConsentAcceptedAt — ISO timestamp of when the user accepted the
+ * scan-consent screen (app/scan-consent.tsx), or null if never. Per
+ * device, same store and persistence as the other keys in this module.
+ * Read by the Scan tab gate (via store/useScanConsentStore) and, as a
+ * defence in depth, by services/ai/scanner.ts before any request is built.
+ */
+export async function loadScanConsentAcceptedAt(): Promise<string | null> {
+  try {
+    const raw = await SecureStore.getItemAsync(PREF_KEYS.scanConsentAcceptedAt);
+    return raw && raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveScanConsentAcceptedAt(iso: string | null): Promise<void> {
+  try {
+    if (iso === null) {
+      await SecureStore.deleteItemAsync(PREF_KEYS.scanConsentAcceptedAt);
+    } else {
+      await SecureStore.setItemAsync(PREF_KEYS.scanConsentAcceptedAt, iso);
+    }
+  } catch {
+    // ignore — the in-memory store still reflects the choice for this
+    // session; the gate shows again next launch if the write was lost.
+  }
+}
 
 export interface ReminderPrefs {
   enabled: boolean;

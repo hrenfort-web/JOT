@@ -57,6 +57,12 @@ export default function ProcessingScreen() {
   const router = useRouter();
   const captured = useScanStore((s) => s.captured);
   const setParsed = useScanStore((s) => s.setParsed);
+  const clearAll = useScanStore((s) => s.clearAll);
+  // Set when WE clear the scan store on the way out (Enter manually), so
+  // the "no captured image → bounce to /scan" safety effect below doesn't
+  // fire against our own clear and redirect the user to the Scan tab
+  // instead of home.
+  const leavingRef = useRef(false);
   const flatProjects = useProjectStore((s) => s.flatProjects);
   const user = useAuthStore((s) => s.user);
 
@@ -81,7 +87,7 @@ export default function ProcessingScreen() {
 
   useEffect(() => {
     if (!captured) {
-      router.replace('/scan');
+      if (!leavingRef.current) router.replace('/scan');
       return;
     }
     if (flatProjects.length === 0) {
@@ -195,6 +201,13 @@ export default function ProcessingScreen() {
   };
 
   const onEnterManually = () => {
+    // The user is abandoning the scan. Drop the captured base64 (and any
+    // parsed result) from memory now rather than leaving it in the store
+    // until the next capture or app restart — the consent copy promises
+    // the photo is used only for the scan. leavingRef stops the
+    // no-captured safety effect from bouncing us to /scan on this clear.
+    leavingRef.current = true;
+    clearAll();
     if (router.canDismiss?.()) {
       router.dismissAll();
     } else {

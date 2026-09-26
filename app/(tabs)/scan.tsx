@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   CameraView,
   useCameraPermissions,
@@ -20,8 +20,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme';
 import { TipCard } from '../../components/TipCard';
 import { useScanStore } from '../../store/useScanStore';
+import { useScanConsentStore } from '../../store/useScanConsentStore';
 import { useToastStore } from '../../store/useToastStore';
 import { compressForUpload } from '../../services/scan/compress';
+import { SCAN_CONSENT_SETTINGS_LABEL } from '../../utils/scanConsentCopy';
 
 type FlashMode = 'off' | 'on';
 
@@ -33,6 +35,41 @@ export default function ScanScreen() {
   const [busy, setBusy] = useState(false);
   const setCaptured = useScanStore((s) => s.setCaptured);
   const showToast = useToastStore((s) => s.show);
+
+  // Consent gate. This tab is the first screen a user reaches by tapping
+  // Scan, so it is where the gate lives: until scanConsentAcceptedAt is
+  // set, nothing below renders the CameraView, requests camera permission,
+  // or opens the photo picker. On focus, once the preference is loaded, a
+  // null value pushes the consent modal in gate mode — unless the user
+  // already chose "Not now" this session, in which case the placeholder
+  // below offers to re-open it instead of nagging on every tab switch.
+  const consentAcceptedAt = useScanConsentStore((s) => s.acceptedAt);
+  const consentLoaded = useScanConsentStore((s) => s.isLoaded);
+  const loadConsent = useScanConsentStore((s) => s.load);
+  const clearConsentDecline = useScanConsentStore((s) => s.clearDecline);
+
+  const openConsentGate = useCallback(() => {
+    router.push({ pathname: '/scan-consent', params: { mode: 'gate' } });
+  }, [router]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      (async () => {
+        await loadConsent();
+        if (!active) return;
+        const { acceptedAt, declinedThisSession } = useScanConsentStore.getState();
+        if (acceptedAt === null && !declinedThisSession) {
+          openConsentGate();
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, [loadConsent, openConsentGate]),
+  );
+
+  const consentGiven = consentLoaded && consentAcceptedAt !== null;
 
   const handleCapture = async () => {
     if (!cameraRef.current || busy) return;
@@ -95,6 +132,40 @@ export default function ScanScreen() {
     Haptics.selectionAsync().catch(() => {});
     setFlash((f) => (f === 'off' ? 'on' : 'off'));
   };
+
+  // Everything from here down is behind consent. This return precedes the
+  // permission branches so neither the CameraView nor the "Allow camera" /
+  // "Use photo library" affordances exist before acceptance.
+  if (!consentGiven) {
+    return (
+      <SafeAreaView style={styles.permissionWrap}>
+        {!consentLoaded ? (
+          <ActivityIndicator color={colors.accent} />
+        ) : (
+          <View style={styles.permissionContent}>
+            <View style={styles.permissionIconWrap}>
+              <Ionicons name="sparkles-outline" size={36} color={colors.accent} />
+            </View>
+            <Text style={styles.permissionTitle}>Scanning needs your OK first</Text>
+            <Text style={styles.permissionBody}>
+              Read {SCAN_CONSENT_SETTINGS_LABEL.toLowerCase()} before the camera opens.
+            </Text>
+            <Pressable
+              onPress={() => {
+                clearConsentDecline();
+                openConsentGate();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Review and continue"
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+            >
+              <Text style={styles.primaryBtnText}>Review and continue</Text>
+            </Pressable>
+          </View>
+        )}
+      </SafeAreaView>
+    );
+  }
 
   if (!permission) {
     return (

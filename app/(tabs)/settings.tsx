@@ -30,6 +30,7 @@ import { getFirst } from '../../db/database';
 import { FIRM_SETTING_KEYS, readFirmSetting } from '../../services/firmSettings';
 import { PHASE_DEFAULTS } from '../../services/memos/suggestions';
 import { phaseMeta } from '../../utils/phaseMeta';
+import { SCAN_CONSENT_SETTINGS_LABEL } from '../../utils/scanConsentCopy';
 
 const REMINDER_TIMES = [
   { label: '3 PM', hour: 15 },
@@ -637,6 +638,14 @@ export default function SettingsScreen() {
           <Row onPress={() => Linking.openURL(PRIVACY_URL)}>
             <Text style={styles.rowLabel}>Privacy policy</Text>
             <Ionicons name="open-outline" size={18} color={colors.muted} />
+          </Row>
+          <Row
+            onPress={() =>
+              router.push({ pathname: '/scan-consent', params: { mode: 'info' } })
+            }
+          >
+            <Text style={styles.rowLabel}>{SCAN_CONSENT_SETTINGS_LABEL}</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
           </Row>
         </Section>
 

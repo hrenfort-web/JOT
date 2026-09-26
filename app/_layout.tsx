@@ -20,6 +20,7 @@ import {
 } from '../services/sync/connectivity';
 import { processQueue } from '../services/sync/queue';
 import { useEntryStore } from '../store/useEntryStore';
+import { SCAN_CONSENT_SETTINGS_LABEL } from '../utils/scanConsentCopy';
 import * as Notifications from 'expo-notifications';
 import {
   configureNotificationHandler,
@@ -113,6 +114,17 @@ const SCREEN_OPTIONS_SCAN_REVIEW = {
 };
 
 const SCREEN_OPTIONS_AUTH_LOGIN = { headerShown: false, gestureEnabled: false };
+
+// Scan-consent modal (app/scan-consent.tsx). Flat route for the same
+// /scan-prefix reason as scan-processing / scan-review. Swipe-to-dismiss is
+// off so the gate mode's only exits are its two buttons; the screen sets its
+// own headerLeft per mode. Title comes from the single copy module.
+const SCREEN_OPTIONS_SCAN_CONSENT = {
+  title: SCAN_CONSENT_SETTINGS_LABEL,
+  presentation: 'modal' as const,
+  headerBackVisible: false,
+  gestureEnabled: false,
+};
 // ─────────────────────────────────────────────────────────────────────
 
 function useProtectedRoute() {
@@ -401,6 +413,11 @@ export default function RootLayout() {
         key="scan-review"
         name="scan-review"
         options={SCREEN_OPTIONS_SCAN_REVIEW}
+      />,
+      <Stack.Screen
+        key="scan-consent"
+        name="scan-consent"
+        options={SCREEN_OPTIONS_SCAN_CONSENT}
       />,
       <Stack.Screen
         key="auth/login"

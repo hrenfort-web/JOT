@@ -4,6 +4,7 @@ import {
   ProjectLookupEntry,
   lookupTableToPromptString,
 } from './matcher';
+import { loadScanConsentAcceptedAt } from '../../utils/preferences';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
@@ -61,6 +62,17 @@ export async function parseTimesheetImage(
   projectLookup: ProjectLookupEntry[],
   options: ScanOptions = {},
 ): Promise<ParsedTimesheet> {
+  // Defence in depth. The UI gate (app/(tabs)/scan.tsx → app/scan-consent.tsx)
+  // is the primary control: it runs before the camera or photo picker opens,
+  // so no image exists to send until the user has accepted. This check
+  // guards against a future caller reaching this function some other way.
+  // It reads the persisted preference directly, not the in-memory store, so
+  // it cannot be satisfied by an unhydrated store.
+  const consentAcceptedAt = await loadScanConsentAcceptedAt();
+  if (consentAcceptedAt === null) {
+    throw new Error('Scan consent not given');
+  }
+
   const apiKey = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error(
