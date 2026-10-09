@@ -42,8 +42,8 @@ const REMINDER_TIMES = [
 const HOUR_OPTIONS_PER_DAY = [6, 7, 8, 9, 10];
 const HOUR_OPTIONS_PER_WEEK = [30, 35, 40, 45, 50];
 
-const FEEDBACK_EMAIL = 'feedback@jot.app';
-const PRIVACY_URL = 'https://jot.app/privacy';
+const FEEDBACK_EMAIL = 'hadyn@studiogarchitectsinc.com';
+const PRIVACY_URL = 'https://sites.google.com/view/jot-privacy';
 
 // Hadyn's BQE employee id. The Studio G stats screen is gated to this id
 // (or any dev build) so a regular staff user never sees the link. Hardcoded
