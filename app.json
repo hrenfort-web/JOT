@@ -20,7 +20,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.getjot.app",
-      "supportsTablet": true,
+      "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
